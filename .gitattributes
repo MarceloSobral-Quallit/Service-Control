@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Service Control  |  Root  |  .gitattributes
+# Normalização de line endings e tipagem de arquivos para o repositório.
+#
+# © Quallit — Projeto proprietário. Todos os direitos reservados.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Comportamento padrão — normalização automática
+* text=auto
+
+# Texto — LF no repositório (plataforma-neutro)
+*.py        text eol=lf
+*.pyw       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.sql       text eol=lf
+*.xml       text eol=lf
+*.ini       text eol=lf
+*.cfg       text eol=lf
+*.sh        text eol=lf
+
+# Scripts Windows — CRLF obrigatório
+*.ps1       text eol=crlf
+*.bat       text eol=crlf
+
+# Binários — sem normalização
+*.exe   binary
+*.dll   binary
+*.pyd   binary
+*.pdb   binary
+*.zip   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pfx   binary
+*.p12   binary
+*.cer   binary
+*.lnk   binary
+
+# Artefatos locais gerados — sem normalização
+tools/certs/*       -text
+tools/build_log/*   -text

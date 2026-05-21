@@ -1,0 +1,44 @@
+# ─── Python (GUI) ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+
+# ─── Build e empacotamento ────────────────────────────────────────────────────
+GUI/build/
+GUI/dist/
+GUI/*.spec
+*.spec.bak
+
+# ─── Logs e pastas de runtime ─────────────────────────────────────────────────
+*/logs/
+temp/
+log/
+
+# ─── Certificados e assinatura ───────────────────────────────────────────────
+*.pfx
+*.p12
+*.cer
+tools/certs/*
+!tools/certs/.gitkeep
+
+# ─── Logs de build ────────────────────────────────────────────────────────────
+tools/build_log/
+
+# ─── Sync GitHub (contém remote/e-mail) ──────────────────────────────────────
+tools/git/github_sync.ini
+
+# ─── IDE e OS ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+
+# ─── IA / Histórico de sessão ─────────────────────────────────────────────────
+.specstory/

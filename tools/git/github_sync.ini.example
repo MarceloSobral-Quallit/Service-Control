@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  github_sync.ini.example
+#  Copie este arquivo para github_sync.ini e ajuste os valores.
+#  O arquivo github_sync.ini NAO deve ser commitado (esta no .gitignore).
+# ─────────────────────────────────────────────────────────────────────────────
+
+[git]
+# URL HTTPS do repositório no GitHub
+remote   = https://github.com/MarceloSobral-Quallit/Service-Control.git
+
+# Branch alvo (padrão: main)
+branch   = main
+
+# Nome de usuário para commits locais
+username = MarceloSobral-Quallit
+
+# E-mail para commits locais
+email    = INSIRA_SEU_EMAIL
+
+# Rótulo exibido nos prompts e mensagens de commit
+project  = Service-Control
+
+# Mensagem de commit padrão (opcional)
+# Deixe vazio para geração automática no formato:
+#   {PROJETO} - Version {versao} - Build {YYYYMMDD_HHMMSS}
+# Exemplo gerado: Service-Control - Version 1.01.05.26 - Build 20260521_143022
+default_commit_message =
