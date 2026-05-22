@@ -186,8 +186,6 @@ Write-Host "  $targetFolder" -ForegroundColor Green
 # -----------------------------------------------------------------------
 if ($DisableAllNow) {
 
-    Write-Host "`n--- Desativando todos os servicos VirtualBox agora... ---" -ForegroundColor Yellow
-
     $svcNames = @('vboxdrv', 'VBoxSDS', 'vboxnetflt', 'vboxnetadp')
     $present  = @()
     foreach ($n in $svcNames) {
@@ -200,9 +198,38 @@ if ($DisableAllNow) {
              Where-Object { $_.DisplayName -like '*VirtualBox*' -and $present -notcontains $_.Name }
     foreach ($svc in $extra) { $present += $svc.Name }
 
+    # -----------------------------------------------------------------------
+    # Desabilita adaptadores ANTES de parar servicos
+    # (vboxnetadp nao pode ser parado enquanto o adaptador Host-Only esta ativo)
+    # -----------------------------------------------------------------------
+    Write-Host "`n--- Desabilitando adaptadores de rede VirtualBox agora... ---" -ForegroundColor Yellow
+    $adapters = Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue |
+                Where-Object { $_.InterfaceDescription -like '*VirtualBox*' -or $_.Name -like '*VirtualBox*' }
+
+    if (-not $adapters) {
+        Write-Host "  Nenhum adaptador VirtualBox encontrado." -ForegroundColor DarkGray
+    } else {
+        foreach ($a in $adapters) {
+            if ($a.Status -eq 'Disabled') {
+                Write-Host "  Ja desabilitado: $($a.Name) [$($a.InterfaceDescription)]" -ForegroundColor DarkGray
+            } else {
+                try {
+                    Disable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop
+                    Write-Host "  Desabilitado   : $($a.Name) [$($a.InterfaceDescription)]" -ForegroundColor Green
+                } catch {
+                    Write-Host "  Falha adapter  : $($a.Name) - $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+        }
+    }
+
+    # Aguarda o driver liberar apos desabilitar os adaptadores
+    Start-Sleep -Seconds 2
+
     if ($present.Count -eq 0) {
         Write-Host "Nenhum servico VirtualBox encontrado para desativar." -ForegroundColor DarkYellow
     } else {
+        Write-Host "`n--- Desativando todos os servicos VirtualBox agora... ---" -ForegroundColor Yellow
         # Para na ordem reversa (driver por ultimo)
         [Array]::Reverse($present)
         foreach ($s in $present) {
@@ -226,27 +253,6 @@ if ($DisableAllNow) {
             }
         }
         Write-Host "Processados: $($present -join ', ')" -ForegroundColor Gray
-    }
-
-    Write-Host "`n--- Desabilitando adaptadores de rede VirtualBox agora... ---" -ForegroundColor Yellow
-    $adapters = Get-NetAdapter -ErrorAction SilentlyContinue |
-                Where-Object { $_.InterfaceDescription -like '*VirtualBox*' -or $_.Name -like '*VirtualBox*' }
-
-    if (-not $adapters) {
-        Write-Host "  Nenhum adaptador VirtualBox encontrado." -ForegroundColor DarkGray
-    } else {
-        foreach ($a in $adapters) {
-            if ($a.Status -eq 'Disabled') {
-                Write-Host "  Ja desabilitado: $($a.Name)" -ForegroundColor DarkGray
-            } else {
-                try {
-                    Disable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop
-                    Write-Host "  Desabilitado   : $($a.Name)" -ForegroundColor Green
-                } catch {
-                    Write-Host "  Falha adapter  : $($a.Name) - $($_.Exception.Message)" -ForegroundColor Red
-                }
-            }
-        }
     }
 
     Write-Host "`nPronto. Use o atalho 'Enable' quando precisar do VirtualBox." -ForegroundColor Green

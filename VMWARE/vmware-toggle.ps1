@@ -1,6 +1,6 @@
 <#
 ===============================================================================
- VMware Toggle NG
+ VMware Toggle
 -------------------------------------------------------------------------------
  Controla completamente o VMware no Windows: servicos + adaptadores de rede.
 

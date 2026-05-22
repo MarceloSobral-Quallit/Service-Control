@@ -40,7 +40,7 @@ if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
 # Cada entrada: Nome exibido, pasta relativa, arquivo install-shortcuts
 # -----------------------------------------------------------------------
 $services = @(
-    @{ Label = 'VMware';     Dir = 'VMWARE';     Script = 'install-shortcuts-ng.ps1' }
+    @{ Label = 'VMware';     Dir = 'VMWARE';     Script = 'install-shortcuts.ps1' }
     @{ Label = 'Fortinet';   Dir = 'FORTINET';   Script = 'install-shortcuts.ps1'    }
     @{ Label = 'VirtualBox'; Dir = 'VIRTUALBOX'; Script = 'install-shortcuts.ps1'    }
     @{ Label = 'OpenVPN';    Dir = 'OPENVPN';    Script = 'install-shortcuts.ps1'    }

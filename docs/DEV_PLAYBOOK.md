@@ -1,7 +1,7 @@
 # Service Control — DEV Playbook
 
 **Mantenedor:** Quallit Dev Team — desenv@quallit.com.br  
-**Versão:** 1.01.05.26
+**Versão:** 1.12.05.26
 
 ---
 
@@ -26,7 +26,7 @@ O projeto é composto por três camadas independentes que podem ser usadas separ
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Camada 1 — Toggle scripts (PS1)                    │
-│  vmware-toggle-ng.ps1, fortinet-toggle.ps1, etc.   │
+│  vmware-toggle.ps1, fortinet-toggle.ps1, etc.      │
 │  Responsabilidade: controlar serviços + adaptadores │
 └───────────────────────┬─────────────────────────────┘
                         │ chamado por
@@ -56,9 +56,8 @@ Service-Control/
 │                               # Gerencia desinstalação e limpeza de legado
 │
 ├── VMWARE/
-│   ├── vmware-toggle-ng.ps1    # Lógica de enable/disable: serviços + VMnet
-│   ├── install-shortcuts-ng.ps1# Copia scripts → ProgramData; cria .lnk
-│   ├── README.txt              # Documentação do módulo VMware
+│   ├── vmware-toggle.ps1       # Lógica de enable/disable: serviços + VMnet
+│   ├── install-shortcuts.ps1   # Copia scripts → ProgramData; cria .lnk
 │   └── link/                   # Atalhos .lnk de referência (não usados pelo install)
 │
 ├── FORTINET/ | VIRTUALBOX/ | OPENVPN/
@@ -101,25 +100,42 @@ Os atalhos apontam **sempre** para `ProgramData`, não para a origem. Isso permi
 if getattr(sys, "frozen", False):
     # PyInstaller onefile: scripts embarcados extraídos em sys._MEIPASS
     _ROOT_DIR = Path(sys._MEIPASS)
+    _EXE_DIR  = Path(sys.executable).resolve().parent   # pasta real do .exe
 else:
     # Execução direta: main.py está em GUI/, scripts em ../
     _ROOT_DIR = Path(__file__).resolve().parent.parent
+    _EXE_DIR  = _ROOT_DIR
+
+_GUI_LOG_FILE = _EXE_DIR / "ServiceControl_log.txt"
 ```
 
-O PyInstaller `--onefile` extrai o bundle para um diretório temporário (`sys._MEIPASS`) antes de executar. Sem essa detecção, `Path(__file__).parent` apontaria para o diretório temporário do sistema — não para os scripts de serviço.
+`_ROOT_DIR` aponta para os scripts embarcados (leitura); `_EXE_DIR` aponta para onde o `.exe` está em disco (escrita do log). Separação necessária porque `sys._MEIPASS` é um diretório temporário descartado após a execução.
 
 ### Como a GUI chama os scripts
 
 ```python
 script = _ROOT_DIR / svc["dir"] / svc["script"]
-# Exemplo (frozen): sys._MEIPASS / "VMWARE" / "install-shortcuts-ng.ps1"
+# Exemplo (frozen): sys._MEIPASS / "VMWARE" / "install-shortcuts.ps1"
+
+# Força UTF-8 na saída para evitar garbling de mensagens do sistema Windows
+ps_call = f'[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; & "{script}"'
+if extra_args:
+    ps_call += " " + " ".join(extra_args)
 
 cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-       "-File", str(script), *extra_args]
+       "-Command", ps_call]
 proc = subprocess.Popen(cmd, stdout=PIPE, stderr=STDOUT, ...)
 ```
 
-O `subprocess.CREATE_NO_WINDOW` evita que uma janela de console apareça ao lado da GUI.
+O wrapper `[Console]::OutputEncoding=UTF8` antes do `&` garante que mensagens do sistema (Stop-Service, sc.exe, etc.) — que saím em CP1252/OEM por padrão — sejam recebidas corretamente pelo Python.
+
+### Gerenciamento de processos
+
+Todos os `Popen` ativos são rastreados em `self._procs: list[subprocess.Popen]`. O método `_on_close()` chama `proc.terminate()` em cada um antes de destruir a janela, evitando processos PowerShell órfãos. O mesmo handler é registrado no `WM_DELETE_WINDOW` (botão `×` da barra de título).
+
+### Versão exibida na saída
+
+Ao iniciar, a GUI escreve `Service Control  v{APP_VERSION}` como primeira linha da área de log (tag `info`). Isso permite identificar a versão exata ao analisar capturas de tela ou logs trazidos pelo usuário.
 
 ### Status de instalação
 
@@ -151,7 +167,11 @@ python tools\build_release.py
 .\tools\build_menu.bat
 ```
 
-### O que o pipeline faz (Etapa 0 + 3 etapas)
+### O que o pipeline faz (limpeza + Etapa 0 + 3 etapas + limpeza final)
+
+**Limpeza inicial**
+
+Antes de qualquer etapa, remove `GUI/dist/` e `GUI/build/` para garantir que o build parte de um estado limpo, sem artefatos de execuções anteriores.
 
 **Etapa 0 — Verificação de encoding**
 
@@ -189,6 +209,10 @@ O ZIP RELEASE é o pacote a entregar ao usuário — contém o executável e o `
 
 Arquivos excluídos do BACKUP: `dist/`, `build/`, `__pycache__/`, `.git/`, `.specstory/`, `temp/`, `.pyc`, `.spec`, `.pfx`, `tools/git/github_sync.ini`.
 
+**Limpeza final**
+
+Após os ZIPs, remove `GUI/build/` (arquivos temporários do PyInstaller). `GUI/dist/` é mantida com o executável gerado.
+
 ### Scripts embarcados
 
 Os 4 diretórios de serviço são copiados para dentro do `.exe` via `--add-data`. Em tempo de execução, o PyInstaller extrai tudo para `sys._MEIPASS`. A estrutura interna após extração é:
@@ -196,8 +220,8 @@ Os 4 diretórios de serviço são copiados para dentro do `.exe` via `--add-data
 ```
 sys._MEIPASS/
 ├── VMWARE/
-│   ├── vmware-toggle-ng.ps1
-│   └── install-shortcuts-ng.ps1
+│   ├── vmware-toggle.ps1
+│   └── install-shortcuts.ps1
 ├── FORTINET/
 │   └── ...
 ├── VIRTUALBOX/
@@ -209,6 +233,16 @@ sys._MEIPASS/
 ### Ícone personalizado
 
 Se existir `GUI/assets/icon.ico`, ele é incluído automaticamente no build. Caso contrário, o build prossegue sem ícone.
+
+### Ordem de desativação no VirtualBox (`-DisableAllNow`)
+
+O driver `vboxnetadp` (NDIS miniport) não pode ser parado enquanto o adaptador Host-Only está ativo. Por isso o bloco `-DisableAllNow` de `install-shortcuts.ps1` executa na seguinte ordem:
+
+1. **Desabilita adaptadores** (`Disable-NetAdapter`) com `-IncludeHidden`
+2. `Start-Sleep -Seconds 2` — aguarda o kernel liberar o binding
+3. **Para e desabilita serviços** (incluindo `vboxnetadp`)
+
+Sem essa ordem, `Stop-Service vboxnetadp` falha com erro de permissão.
 
 ---
 

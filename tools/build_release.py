@@ -21,6 +21,7 @@
 
 import datetime
 import re
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -160,6 +161,17 @@ def _warn(msg: str):  print(f"  {_C_YELLOW}[!!]{_C_RESET}  {msg}")
 def _err(msg: str):   print(f"  {_C_RED}[ERR]{_C_RESET} {msg}")
 
 
+# ─── Limpeza de artefatos ────────────────────────────────────────────────────
+def _clean_artifacts() -> None:
+    """Remove dist/ e build/ da pasta GUI para evitar artefatos de builds anteriores."""
+    for target in (_DIST_DIR, _BUILD_DIR):
+        if target.exists():
+            shutil.rmtree(target)
+            _ok(f"Removido: {target.relative_to(_ROOT_DIR)}")
+        else:
+            _info(f"Já limpo:  {target.relative_to(_ROOT_DIR)}")
+
+
 # ─── Build ────────────────────────────────────────────────────────────────────
 def _run_pyinstaller(version: str):
     icon_arg = []
@@ -264,6 +276,10 @@ def _generate_zips(version: str) -> bool:
 def main():
     _banner("Service Control — Build Release")
 
+    # Limpeza inicial
+    _banner("Limpeza inicial — artefatos anteriores")
+    _clean_artifacts()
+
     # Etapa 0: Verificação de encoding
     _banner("Etapa 0/3 — Encoding")
     _check_encoding()
@@ -294,6 +310,14 @@ def main():
     _banner("Etapa 3/3 — ZIPs Release e Backup")
     if not _generate_zips(new_ver):
         _warn("Um ou mais ZIPs não foram gerados. Verifique o log acima.")
+
+    # Limpeza final
+    _banner("Limpeza final — artefatos de build")
+    if _BUILD_DIR.exists():
+        shutil.rmtree(_BUILD_DIR)
+        _ok(f"Removido: {_BUILD_DIR.relative_to(_ROOT_DIR)}")
+    else:
+        _info(f"Já limpo:  {_BUILD_DIR.relative_to(_ROOT_DIR)}")
 
     _banner(f"Build concluído — v{new_ver}")
 

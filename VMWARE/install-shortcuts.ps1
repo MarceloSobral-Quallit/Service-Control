@@ -1,11 +1,8 @@
 <#
 ===============================================================================
- VMware Toggle NG - Instalador de Atalhos
+ VMware Toggle - Instalador de Atalhos
 -------------------------------------------------------------------------------
- Cria atalhos no Menu Iniciar (Service Control) que chamam vmware-toggle-ng.ps1.
-
- MELHORIA CRITICA: Todos os atalhos usam "-File" em vez de "-Command".
- Isso elimina o problema de escaping multi-camada das versoes anteriores.
+ Cria atalhos no Menu Iniciar (Service Control) que chamam vmware-toggle.ps1.
 
  Parametros:
    -DisableAllNow   Para e desabilita todos os servicos VMware imediatamente.
@@ -13,7 +10,7 @@
 
  Uso:
    powershell.exe -NoProfile -ExecutionPolicy Bypass `
-       -File ".\install-shortcuts-ng.ps1" -DisableAllNow
+       -File ".\install-shortcuts.ps1" -DisableAllNow
 ===============================================================================
 #>
 
@@ -38,7 +35,7 @@ if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
 $scriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $scriptDir) { $scriptDir = $PSScriptRoot }
 $progDataDir = 'C:\ProgramData\ServiceControl\VMWARE'
-$togglePs1   = Join-Path $progDataDir 'vmware-toggle-ng.ps1'
+$togglePs1   = Join-Path $progDataDir 'vmware-toggle.ps1'
 $logsDir     = Join-Path $progDataDir 'logs'
 
 # -----------------------------------------------------------------------
@@ -83,7 +80,7 @@ try {
 # -----------------------------------------------------------------------
 if (-not (Test-Path $togglePs1)) {
     Write-Host "ERRO: Arquivo nao encontrado: $togglePs1" -ForegroundColor Red
-    Write-Host 'Certifique-se de que vmware-toggle-ng.ps1 esta na mesma pasta.' -ForegroundColor Yellow
+    Write-Host 'Certifique-se de que vmware-toggle.ps1 esta na mesma pasta.' -ForegroundColor Yellow
     exit 1
 }
 
@@ -128,29 +125,15 @@ function New-Shortcut {
 }
 
 # -----------------------------------------------------------------------
-# Atalhos ENABLE
-# Usa -File em vez de -Command: sem escaping multi-camada, sem falha silenciosa
-# A abertura da GUI esta encapsulada no parametro -OpenGUI do proprio toggle
+# Atalho ENABLE
 # -----------------------------------------------------------------------
-Write-Host "`nCriando atalhos Enable..." -ForegroundColor Cyan
+Write-Host "`nCriando atalho Enable..." -ForegroundColor Cyan
 
 New-Shortcut `
-    -LnkPath   (Join-Path $targetFolder 'VMware - Enable (USB+Bridge).lnk') `
+    -LnkPath   (Join-Path $targetFolder 'VMware - Enable.lnk') `
     -Target    'powershell.exe' `
     -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$togglePs1`" -Mode Enable -OpenGUI" `
-    -Desc      'Habilita VMware completo (USB + Bridge) e abre interface'
-
-New-Shortcut `
-    -LnkPath   (Join-Path $targetFolder 'VMware - Enable (No USB).lnk') `
-    -Target    'powershell.exe' `
-    -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$togglePs1`" -Mode Enable -OpenGUI -NoUSB" `
-    -Desc      'Habilita VMware sem USB Arbitration e abre interface'
-
-New-Shortcut `
-    -LnkPath   (Join-Path $targetFolder 'VMware - Enable (No Bridge).lnk') `
-    -Target    'powershell.exe' `
-    -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$togglePs1`" -Mode Enable -OpenGUI -NoBridge" `
-    -Desc      'Habilita VMware sem VMnet Bridge e abre interface'
+    -Desc      'Habilita VMware completo e abre interface'
 
 # -----------------------------------------------------------------------
 # Atalho DISABLE
@@ -162,29 +145,6 @@ New-Shortcut `
     -Target    'powershell.exe' `
     -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$togglePs1`" -Mode Disable" `
     -Desc      'Para e desabilita todos os servicos e adaptadores VMware'
-
-# -----------------------------------------------------------------------
-# Atalhos utilitarios
-# -----------------------------------------------------------------------
-Write-Host "`nCriando atalhos utilitarios..." -ForegroundColor Cyan
-
-if (-not (Test-Path $logsDir)) {
-    New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
-}
-
-New-Shortcut `
-    -LnkPath   (Join-Path $targetFolder 'VMware - Abrir pasta de logs.lnk') `
-    -Target    'explorer.exe' `
-    -Arguments "`"$logsDir`"" `
-    -IconPath  'imageres.dll,3' `
-    -Desc      'Abre pasta de logs do VMware Toggle NG'
-
-New-Shortcut `
-    -LnkPath   (Join-Path $targetFolder 'VMware - Abrir pasta de scripts.lnk') `
-    -Target    'explorer.exe' `
-    -Arguments "`"$progDataDir`"" `
-    -IconPath  'imageres.dll,3' `
-    -Desc      'Abre pasta dos scripts VMware Toggle NG'
 
 # -----------------------------------------------------------------------
 # Salva copias dos atalhos em link\ (referencia / redistribuicao)

@@ -1,7 +1,7 @@
 # Service Control — Manual de Uso
 
 **Mantenedor:** Quallit Dev Team — desenv@quallit.com.br  
-**Versão:** 1.01.05.26  
+**Versão:** 1.12.05.26  
 **Plataforma:** Windows 10 / 11 x64
 
 ---
@@ -84,7 +84,7 @@ Execute como Administrador, a partir da pasta do serviço:
 
 ```powershell
 # VMware
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\VMWARE\install-shortcuts-ng.ps1" -DisableAllNow
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\VMWARE\install-shortcuts.ps1" -DisableAllNow
 
 # Fortinet
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\FORTINET\install-shortcuts.ps1" -DisableAllNow
@@ -110,16 +110,14 @@ Menu Iniciar > Programs > Service Control
 
 | Atalho | Ação |
 |---|---|
-| `VMware - Enable (USB+Bridge)` | Habilita VMware completo (USB + Bridge) e abre a interface |
-| `VMware - Enable (No USB)` | Habilita VMware sem VMUSBArbService e abre a interface |
-| `VMware - Enable (No Bridge)` | Habilita VMware sem VMnetBridge e abre a interface |
+| `VMware - Enable` | Habilita VMware completo e abre a interface |
 | `VMware - Disable` | Para e desabilita todos os serviços e adaptadores VMware |
-| `VMware - Abrir pasta de logs` | Abre `C:\ProgramData\ServiceControl\VMWARE\logs\` |
 | `Fortinet - Enable` | Habilita FortiClient e abre a interface |
 | `Fortinet - Disable` | Para e desabilita todos os serviços Fortinet |
 | `VirtualBox - Enable` | Habilita VirtualBox e abre a interface |
+| `VirtualBox - Enable (sem abrir GUI)` | Habilita VirtualBox sem abrir a interface |
 | `VirtualBox - Disable` | Para e desabilita todos os serviços VirtualBox |
-| `OpenVPN - Enable` | Habilita OpenVPN e abre a interface |
+| `OpenVPN - Enable` | Habilita OpenVPN |
 | `OpenVPN - Disable` | Para e desabilita todos os serviços OpenVPN |
 
 > Os atalhos solicitam elevação via UAC automaticamente. Não é necessário abrir o PowerShell como Administrador manualmente.
@@ -130,15 +128,15 @@ Menu Iniciar > Programs > Service Control
 
 Os scripts de toggle aceitam parâmetros adicionais para uso direto (PowerShell Admin):
 
-### VMware (`vmware-toggle-ng.ps1`)
+### VMware (`vmware-toggle.ps1`)
 
 ```powershell
-.\vmware-toggle-ng.ps1 -Mode Enable
-.\vmware-toggle-ng.ps1 -Mode Enable -OpenGUI           # Abre VMware após habilitar
-.\vmware-toggle-ng.ps1 -Mode Enable -OpenGUI -NoUSB    # Exclui VMUSBArbService
-.\vmware-toggle-ng.ps1 -Mode Enable -OpenGUI -NoBridge # Exclui VMnetBridge
-.\vmware-toggle-ng.ps1 -Mode Disable
-.\vmware-toggle-ng.ps1 -Mode Disable -LogDir "D:\meus-logs"
+.\vmware-toggle.ps1 -Mode Enable
+.\vmware-toggle.ps1 -Mode Enable -OpenGUI           # Abre VMware após habilitar
+.\vmware-toggle.ps1 -Mode Enable -OpenGUI -NoUSB    # Exclui VMUSBArbService
+.\vmware-toggle.ps1 -Mode Enable -OpenGUI -NoBridge # Exclui VMnetBridge
+.\vmware-toggle.ps1 -Mode Disable
+.\vmware-toggle.ps1 -Mode Disable -LogDir "D:\meus-logs"
 ```
 
 | Parâmetro | Descrição |
@@ -171,14 +169,20 @@ Os scripts de toggle aceitam parâmetros adicionais para uso direto (PowerShell 
 
 ## Logs
 
-Os scripts geram dois arquivos de log por execução, em `C:\ProgramData\ServiceControl\<SERVIÇO>\logs\`:
+Os scripts de toggle geram logs por execução em `C:\ProgramData\ServiceControl\<SERVIÇO>\logs\`:
 
 | Arquivo | Conteúdo |
 |---|---|
-| `YYYY-MM-DD.txt` | Log diário acumulado — útil para histórico |
+| `YYYY-MM-DD.txt` | Log diário acumulado |
 | `Session-YYYYMMDD-HHMMSS.txt` | Transcript completo de cada execução |
 
-Se a pasta padrão não puder ser criada por falta de permissão, os logs vão automaticamente para `%TEMP%\<serviço>_logs\`.
+A **interface gráfica** gera adicionalmente um log persistente ao lado do executável:
+
+| Arquivo | Conteúdo |
+|---|---|
+| `ServiceControl_log.txt` | Todas as ações realizadas na GUI com timestamp, acumulado entre sessões |
+
+Se a pasta padrão não puder ser criada por falta de permissão, os logs de toggle vão automaticamente para `%TEMP%\<serviço>_logs\`.
 
 ---
 
@@ -202,17 +206,27 @@ Se os scripts foram movidos de local, os atalhos podem apontar para caminhos ine
 
 ## Desinstalação
 
-### Remover atalhos do Menu Iniciar
+### Via interface gráfica (recomendado)
 
-- **Via menu.ps1:** opções 11–15
-- **Via GUI:** selecione os serviços e clique em **Desinstalar Selecionados**
-- **Manual:** delete a pasta `%AppData%\Microsoft\Windows\Start Menu\Programs\Service Control`
+1. Execute `ServiceControl.exe`
+2. Marque os serviços a desinstalar
+3. Clique em **Desinstalar Selecionados**
 
-### Remover scripts instalados (ProgramData)
+O processo executa automaticamente em ordem:
+1. Restaura o tipo de inicialização dos serviços para o padrão (Manual)
+2. Remove os atalhos de `Menu Iniciar > Programs > Service Control`
+3. Remove a pasta `C:\ProgramData\ServiceControl\<SERVIÇO>\`
+4. Remove `C:\ProgramData\ServiceControl\` se não restar nenhum serviço instalado
 
-Os scripts de controle são copiados para `C:\ProgramData\ServiceControl\`. Para remover completamente:
+### Via menu.ps1
+
+- Opções 11–15 removem atalhos de cada serviço
+- Para remover os scripts de ProgramData após: `Remove-Item -Recurse -Force "C:\ProgramData\ServiceControl"`
+
+### Manual
 
 ```powershell
+Remove-Item -Recurse -Force "%AppData%\Microsoft\Windows\Start Menu\Programs\Service Control"
 Remove-Item -Recurse -Force "C:\ProgramData\ServiceControl"
 ```
 
