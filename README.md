@@ -1,7 +1,7 @@
 <h1 align="center">Service Control</h1>
 <p align="center">Gerenciador de serviços e atalhos para VMware, Fortinet, VirtualBox e OpenVPN no Windows.</p>
 <p align="center">
-  <img src="https://img.shields.io/badge/versão-1.24.05.26-blue" />
+  <img src="https://img.shields.io/badge/versão-1.25.05.26-blue" />
   <img src="https://img.shields.io/badge/plataforma-Windows%2010%2F11%20x64-lightgrey" />
   <img src="https://img.shields.io/badge/PowerShell-5.1%2B-blueviolet" />
   <img src="https://img.shields.io/badge/Python-3.x%20(GUI%20opcional)-yellow" />

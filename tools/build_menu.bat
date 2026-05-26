@@ -26,11 +26,19 @@ echo   3. Verificar alteracoes ^(dry-run^)
 echo      ^> mostra o que seria commitado, sem executar
 echo.
 echo   --- GUI ---
-echo   4. Build GUI ^(sem sync^)
-echo      ^> gera GUI\dist\ServiceControl.exe
+echo   4. Build Release - Ambas variantes + Assinar
+echo      ^> ServiceControl_install.exe + _portable.exe com assinatura digital
 echo.
-echo   5. Build GUI + Sync GitHub
-echo      ^> compila e envia ao GitHub
+echo   5. Build Release - Ambas variantes + Assinar + Sync GitHub
+echo.
+echo   6. Build Dev     - Ambas variantes ^(sem assinatura^)
+echo      ^> para testes / desenvolvimento
+echo.
+echo   7. Build Release - Somente install + Assinar
+echo      ^> ServiceControl_install.exe ^(runtime fixo em ProgramData^)
+echo.
+echo   8. Build Release - Somente portable + Assinar
+echo      ^> ServiceControl_portable.exe ^(extracao em %%TEMP%%^)
 echo.
 echo   0. Sair
 echo.
@@ -42,8 +50,9 @@ if "%ESCOLHA%"=="2" goto SYNC_NOPUSH
 if "%ESCOLHA%"=="3" goto DRYRUN
 if "%ESCOLHA%"=="4" goto BUILD_GUI
 if "%ESCOLHA%"=="5" goto BUILD_SYNC
-if "%ESCOLHA%"=="6" goto BUILD_INSTALL
-if "%ESCOLHA%"=="7" goto BUILD_PORTABLE
+if "%ESCOLHA%"=="6" goto BUILD_NOTSIGN
+if "%ESCOLHA%"=="7" goto BUILD_INSTALL
+if "%ESCOLHA%"=="8" goto BUILD_PORTABLE
 if "%ESCOLHA%"=="0" goto FIM
 echo  Opcao invalida. Tente novamente.
 timeout /t 2 > nul
@@ -72,14 +81,14 @@ goto FIM
 
 :BUILD_GUI
 echo.
-echo  Compilando ambas variantes (install + portable)...
+echo  Compilando ambas variantes + assinatura...
 echo.
 python tools\build_release.py both
 goto FIM
 
 :BUILD_SYNC
 echo.
-echo  Compilando ambas variantes (install + portable)...
+echo  Compilando ambas variantes + assinatura...
 echo.
 python tools\build_release.py both
 if errorlevel 1 (
@@ -93,16 +102,23 @@ echo.
 python tools\git\github_sync.py
 goto FIM
 
+:BUILD_NOTSIGN
+echo.
+echo  Compilando ambas variantes sem assinatura (modo dev)...
+echo.
+python tools\build_release.py both --no-sign
+goto FIM
+
 :BUILD_INSTALL
 echo.
-echo  Compilando variante install...
+echo  Compilando variante install + assinatura...
 echo.
 python tools\build_release.py install
 goto FIM
 
 :BUILD_PORTABLE
 echo.
-echo  Compilando variante portable...
+echo  Compilando variante portable + assinatura...
 echo.
 python tools\build_release.py portable
 goto FIM

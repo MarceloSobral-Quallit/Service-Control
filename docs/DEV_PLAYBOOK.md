@@ -1,7 +1,7 @@
 # Service Control — DEV Playbook
 
 **Mantenedor:** Quallit Dev Team — desenv@quallit.com.br  
-**Versão:** 1.24.05.26
+**Versão:** 1.25.05.26
 
 ---
 

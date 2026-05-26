@@ -26,8 +26,8 @@
 #        ZIP BACKUP  → C:\DESENV\PROJECT_BACKUP\ServiceControl_BACKUP-{ver}-{data}.zip
 #
 # Uso:
-#   python tools/build_release.py [install|portable|both]   # padrão: both
-#   (ou via build_menu.bat opções 4–7)
+#   python tools/build_release.py [install|portable|both] [--no-sign]  # padrão: both, com assinatura
+#   (ou via build_menu.bat opções 4–8)
 # ─────────────────────────────────────────────────────────────────────────────
 
 import datetime
@@ -576,19 +576,27 @@ def _generate_zips(version: str, variants_built: "list[str]") -> bool:
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main():
-    # Determina variante(s) a compilar (argumento opcional)
-    # Uso: python build_release.py [install|portable|both]
-    variant_arg = sys.argv[1].lower() if len(sys.argv) > 1 else "both"
+    # Determina variante(s) e modo de assinatura a partir dos argumentos
+    # Uso: python build_release.py [install|portable|both] [--no-sign]
+    variant_arg = "both"
+    do_sign     = True
+    for arg in sys.argv[1:]:
+        if arg == "--no-sign":
+            do_sign = False
+        elif arg in ("install", "portable", "both"):
+            variant_arg = arg
+        else:
+            print(f"[ERR] Argumento desconhecido: '{arg}'. Use: install|portable|both  [--no-sign]")
+            sys.exit(1)
+
     if variant_arg == "both":
         variants_to_build = ["install", "portable"]
-    elif variant_arg in VARIANTS:
-        variants_to_build = [variant_arg]
     else:
-        print(f"[ERR] Variante desconhecida: '{variant_arg}'. Use: install, portable, both")
-        sys.exit(1)
+        variants_to_build = [variant_arg]
 
+    sign_label = "+ Assinar" if do_sign else "sem assinatura"
     label = ", ".join(variants_to_build)
-    _banner(f"Service Control — Build Release  [{label}]")
+    _banner(f"Service Control — Build Release  [{label}  {sign_label}]")
 
     # Limpeza inicial
     _banner("Limpeza inicial — artefatos anteriores")
@@ -625,7 +633,11 @@ def main():
             continue
 
         _info(f"Assinando {exe_name}...")
-        sign_results[exe_name] = _sign_exe(exe)
+        if do_sign:
+            sign_results[exe_name] = _sign_exe(exe)
+        else:
+            _info(f"  Assinatura pulada (--no-sign)")
+            sign_results[exe_name] = (False, "—", "—")
 
     # Etapa 2.5: README_TECNICO.md
     _banner("Etapa 2.5 — README_TECNICO.md")
@@ -650,7 +662,7 @@ def main():
         _README_TECNICO.unlink()
         _ok(f"Removido: {_README_TECNICO.relative_to(_ROOT_DIR)}")
 
-    _banner(f"Build concluído — v{new_ver}  [{label}]")
+    _banner(f"Build concluído — v{new_ver}  [{label}  {sign_label}]")
 
 
 if __name__ == "__main__":
