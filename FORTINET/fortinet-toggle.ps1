@@ -308,7 +308,22 @@ else {
                     Write-Log "Timeout aguardando Stopped: $s" 'Yellow'
                 }
             } catch {
-                Write-Log "Falha ao parar $s : $($_.Exception.Message)" 'Red'
+                Write-Log "Falha ao parar $s via Stop-Service, tentando matar processo..." 'Yellow'
+                try {
+                    $svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='$s'" -ErrorAction SilentlyContinue
+                    if ($svcInfo -and $svcInfo.ProcessId -gt 0) {
+                        Stop-Process -Id $svcInfo.ProcessId -Force -ErrorAction Stop
+                        if (Wait-ServiceState -Name $s -TargetStatus 'Stopped' -TimeoutSec 10) {
+                            Write-Log "Parado OK (kill PID $($svcInfo.ProcessId)): $s" 'Green'
+                        } else {
+                            Write-Log "Processo encerrado mas servico ainda nao Stopped: $s" 'Yellow'
+                        }
+                    } else {
+                        Write-Log "Falha ao parar $s : $($_.Exception.Message)" 'Red'
+                    }
+                } catch {
+                    Write-Log "Falha ao parar $s : $($_.Exception.Message)" 'Red'
+                }
             }
         }
         Set-ServiceStartType -Name $s -StartType 'disabled'
