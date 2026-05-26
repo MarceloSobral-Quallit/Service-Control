@@ -216,7 +216,18 @@ if ($DisableAllNow) {
                     Stop-Service -Name $s -Force -ErrorAction Stop
                     Write-Host "  Parado    : $s" -ForegroundColor Green
                 } catch {
-                    Write-Host "  Falha stop: $s - $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "  Falha stop via Stop-Service, tentando matar processo: $s" -ForegroundColor Yellow
+                    try {
+                        $svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='$s'" -ErrorAction SilentlyContinue
+                        if ($svcInfo -and $svcInfo.ProcessId -gt 0) {
+                            Stop-Process -Id $svcInfo.ProcessId -Force -ErrorAction Stop
+                            Write-Host "  Parado    : $s (kill PID $($svcInfo.ProcessId))" -ForegroundColor Green
+                        } else {
+                            Write-Host "  Falha stop: $s - $($_.Exception.Message)" -ForegroundColor Red
+                        }
+                    } catch {
+                        Write-Host "  Falha stop: $s - $($_.Exception.Message)" -ForegroundColor Red
+                    }
                 }
             } else {
                 Write-Host "  Ja parado : $s" -ForegroundColor DarkGray

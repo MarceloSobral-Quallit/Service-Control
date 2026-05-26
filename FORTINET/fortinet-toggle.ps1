@@ -9,7 +9,7 @@
    2) Define servicos como "demand" (inicio manual)
    3) Inicia servicos Fortinet
    4) Habilita adaptadores de rede Fortinet
-   5) Abre FortiClient
+   5) Informa o caminho do FortiClient (abertura manual)
 
  Mode Disable:
    1) Para servicos Fortinet (aguarda confirmacao real de Stopped)
@@ -209,8 +209,11 @@ function Toggle-FortinetAdapters {
                 Write-Log "Adaptador desabilitado : $($a.Name)" 'Green'
             } elseif ($Action -eq 'Enable' -and $a.Status -ne 'Up') {
                 if ($a.Status -in 'Not Present', 'NotPresent') {
-                    $pnp = Get-PnpDevice -ErrorAction SilentlyContinue |
-                           Where-Object { $_.FriendlyName -eq $a.Name } |
+                    $pnp = Get-PnpDevice -Class Net -ErrorAction SilentlyContinue |
+                           Where-Object {
+                               $_.FriendlyName -eq $a.InterfaceDescription -or
+                               $_.FriendlyName -eq $a.Name
+                           } |
                            Select-Object -First 1
                     if ($pnp) {
                         Enable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false -ErrorAction Stop
@@ -268,7 +271,7 @@ if ($Mode -eq 'Enable') {
     Start-Sleep -Seconds 2
     Toggle-FortinetAdapters -Action Enable
 
-    Write-Log '--- [3/3] Abrindo FortiClient ---' 'Cyan'
+    Write-Log '--- [3/3] Fortinet pronto ---' 'Cyan'
     $guiPaths = @(
         'C:\Program Files\Fortinet\FortiClient\FortiClient.exe',
         'C:\Program Files (x86)\Fortinet\FortiClient\FortiClient.exe',
@@ -277,9 +280,8 @@ if ($Mode -eq 'Enable') {
     )
     $gui = $guiPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
     if ($gui) {
-        Write-Log "Abrindo FortiClient: $gui" 'Cyan'
-        try { Start-Process -FilePath $gui -ErrorAction Stop }
-        catch { Write-Log "Falha ao abrir FortiClient: $($_.Exception.Message)" 'Red' }
+        Write-Log "FortiClient disponivel em: $gui" 'DarkGray'
+        Write-Log 'Abra o FortiClient manualmente quando necessario.' 'Cyan'
     } else {
         Write-Log 'FortiClient nao encontrado nos caminhos padrao.' 'Yellow'
     }

@@ -292,7 +292,27 @@ if ($Mode -eq 'Enable') {
 # -----------------------------------------------------------------------
 else {
 
-    Write-Log '--- [1/2] Parando e desabilitando servicos OpenVPN ---' 'Cyan'
+    Write-Log '--- [1/3] Encerrando processo OpenVPN GUI ---' 'Cyan'
+    $guiProcessNames = @('openvpn-gui', 'OpenVPNConnect', 'openvpnconnect')
+    $killed = $false
+    foreach ($pn in $guiProcessNames) {
+        $procs = Get-Process -Name $pn -ErrorAction SilentlyContinue
+        foreach ($proc in $procs) {
+            try {
+                $proc | Stop-Process -Force -ErrorAction Stop
+                Write-Log "Processo encerrado: $($proc.Name) (PID $($proc.Id))" 'Green'
+                $killed = $true
+            } catch {
+                Write-Log "Falha ao encerrar processo '$($proc.Name)': $($_.Exception.Message)" 'Red'
+            }
+        }
+    }
+    if (-not $killed) {
+        Write-Log 'Nenhum processo GUI OpenVPN em execucao.' 'DarkGray'
+    }
+    Start-Sleep -Milliseconds 800
+
+    Write-Log '--- [2/3] Parando e desabilitando servicos OpenVPN ---' 'Cyan'
     foreach ($s in ($present | Sort-Object -Descending)) {
         $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
         if (-not $svc) {
@@ -315,7 +335,7 @@ else {
         Start-Sleep -Milliseconds 500
     }
 
-    Write-Log '--- [2/2] Desabilitando adaptadores TAP/OpenVPN ---' 'Cyan'
+    Write-Log '--- [3/3] Desabilitando adaptadores TAP/OpenVPN ---' 'Cyan'
     Toggle-OpenVPNAdapters -Action Disable
 
     Write-Log '--- OpenVPN desativado. ---' 'Green'

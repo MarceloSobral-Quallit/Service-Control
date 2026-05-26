@@ -17,7 +17,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 # ─── Versão ──────────────────────────────────────────────────────────────────
-APP_VERSION = "1.14.05.26"
+APP_VERSION = "1.19.05.26"
 APP_TITLE   = "Service Control — Instalador"
 
 # ─── Caminhos base ────────────────────────────────────────────────────────────

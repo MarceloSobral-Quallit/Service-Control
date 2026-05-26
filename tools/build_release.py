@@ -164,12 +164,28 @@ def _err(msg: str):   print(f"  {_C_RED}[ERR]{_C_RESET} {msg}")
 # ─── Limpeza de artefatos ────────────────────────────────────────────────────
 def _clean_artifacts() -> None:
     """Remove dist/ e build/ da pasta GUI para evitar artefatos de builds anteriores."""
+    import time
     for target in (_DIST_DIR, _BUILD_DIR):
-        if target.exists():
-            shutil.rmtree(target)
-            _ok(f"Removido: {target.relative_to(_ROOT_DIR)}")
-        else:
+        if not target.exists():
             _info(f"Já limpo:  {target.relative_to(_ROOT_DIR)}")
+            continue
+        removed = False
+        for attempt in range(1, 4):
+            try:
+                shutil.rmtree(target)
+                _ok(f"Removido: {target.relative_to(_ROOT_DIR)}")
+                removed = True
+                break
+            except PermissionError as exc:
+                if attempt < 3:
+                    _warn(f"Pasta em uso, aguardando... (tentativa {attempt}/3): {target.name}")
+                    time.sleep(2)
+                else:
+                    raise SystemExit(
+                        f"\n[ERR] Não foi possível remover '{target}'.\n"
+                        f"      Feche o Explorer ou qualquer programa com essa pasta aberta e tente novamente.\n"
+                        f"      Detalhe: {exc}"
+                    ) from exc
 
 
 # ─── Build ────────────────────────────────────────────────────────────────────
