@@ -243,6 +243,21 @@ function Toggle-VMwareAdapters {
     }
 }
 
+# Aguarda adaptadores VMware saírem do status 'Not Present' (pós-start de serviços)
+# Retorna $true se todos saíram, $false se timeout
+function Wait-VMwareAdaptersPresent {
+    param([int]$TimeoutSec = 30)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    do {
+        $still = Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue |
+                 Where-Object { ($_.InterfaceDescription -like '*VMware*' -or $_.Name -like 'VMnet*') -and
+                                $_.Status -in 'Not Present', 'NotPresent' }
+        if (-not $still) { return $true }
+        Start-Sleep -Seconds 1
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
+
 # -----------------------------------------------------------------------
 # MODE: ENABLE
 # -----------------------------------------------------------------------
@@ -277,7 +292,9 @@ if ($Mode -eq 'Enable') {
     }
 
     Write-Log '--- [2/3] Habilitando adaptadores VMware ---' 'Cyan'
-    Start-Sleep -Seconds 2  # aguarda servicos inicializarem os dispositivos virtuais
+    Write-Log 'Aguardando adaptadores virtuais serem inicializados pelos servicos...' 'DarkGray'
+    $present2 = Wait-VMwareAdaptersPresent -TimeoutSec 30
+    if (-not $present2) { Write-Log 'Aviso: adaptadores ainda Not Present apos 30s (VMware pode estar lento).' 'Yellow' }
     Toggle-VMwareAdapters -Action Enable
 
     Write-Log '--- [3/3] VMware habilitado. ---' 'Green'

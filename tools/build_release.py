@@ -10,7 +10,10 @@
 # Etapas:
 #   0. Verificação de encoding (.ps1 com não-ASCII sem UTF-8 BOM → aviso)
 #   1. Bump de versão (Minor + MM/YY) + sync em README.md e docs/
-#   2. Compilação PyInstaller (onefile, windowed, scripts embarcados via --add-data)
+#   2. Compilação PyInstaller:
+#      - Gera GUI/exe_version_info.txt (VSVersionInfo) → metadados em Propriedades → Detalhes
+#      - Compila onefile/windowed com --version-file + --add-data (scripts embarcados)
+#   2.5 README_TECNICO.md → metadados do build; incluído em todos os ZIPs; deletado após
 #   3. ZIP RELEASE → C:\DESENV\PROJECT_RELEASE\ServiceControl_RELEASE-{ver}-{data}.zip
 #      ZIP BACKUP  → C:\DESENV\PROJECT_BACKUP\ServiceControl_BACKUP-{ver}-{data}.zip
 #
@@ -32,9 +35,11 @@ _TOOLS_DIR   = Path(__file__).resolve().parent   # Service-Control/tools/
 _ROOT_DIR    = _TOOLS_DIR.parent                 # Service-Control/
 _GUI_DIR     = _ROOT_DIR / "GUI"                 # Service-Control/GUI/
 _MAIN_PY     = _GUI_DIR / "main.py"
-_VERSION_TXT = _GUI_DIR / "version_info.txt"
-_DIST_DIR    = _GUI_DIR / "dist"
-_BUILD_DIR   = _GUI_DIR / "build"
+_VERSION_TXT     = _GUI_DIR / "version_info.txt"
+_EXE_VERSION_TXT = _GUI_DIR / "exe_version_info.txt"   # gerado pelo build — não versionar
+_DIST_DIR        = _GUI_DIR / "dist"
+_README_TECNICO  = _DIST_DIR / "README_TECNICO.md"    # temporário — incluído nos ZIPs, deletado após
+_BUILD_DIR       = _GUI_DIR / "build"
 
 APP_NAME = "ServiceControl"
 
@@ -139,6 +144,104 @@ def _write_version(version: str):
         _sync_version_in_file(_ROOT_DIR / "docs" / doc, _ver_doc_pattern, version)
 
 
+# ─── README_TECNICO.md ─────────────────────────────────────────────────────────────────────
+def _generate_readme_tecnico(version: str) -> None:
+    """Gera README_TECNICO.md em dist/ com metadados do build.
+
+    Obrigatório em todos os ZIPs (RELEASE e BACKUP) conforme padrão Quallit §8.
+    Deletado na limpeza final junto com os demais artefatos temporários.
+    """
+    now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    pv = sys.version_info
+    py_ver = f"{pv.major}.{pv.minor}.{pv.micro}"
+
+    pi_ver = "N/D"
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "PyInstaller", "--version"],
+            capture_output=True, text=True, timeout=10
+        )
+        raw = (r.stdout or r.stderr).strip()
+        if raw:
+            pi_ver = raw.splitlines()[-1].strip()
+    except Exception:
+        pass
+
+    content = (
+        "# Service Control — Informações Técnicas\n\n"
+        "## Metadados do Build\n\n"
+        "| Campo | Valor |\n"
+        "|---|---|\n"
+        "| **Aplicativo** | Service Control |\n"
+        f"| **Versão** | {version} |\n"
+        "| **Empresa** | Quallit |\n"
+        f"| **Data do Build** | {now_str} |\n"
+        f"| **Python** | {py_ver} |\n"
+        f"| **PyInstaller** | {pi_ver} |\n"
+        "| **Plataforma alvo** | Windows 10/11 x64 |\n\n"
+        "## Assinatura Digital\n\n"
+        "| Campo | Valor |\n"
+        "|---|---|\n"
+        "| **Status** | Não assinado |\n"
+        "| **Certificado** | — |\n"
+        "| **Thumbprint** | — |\n"
+        "| **Timestamp** | — |\n\n"
+        "---\n"
+        f"*Gerado automaticamente em: {now_str}*\n"
+    )
+
+    _DIST_DIR.mkdir(parents=True, exist_ok=True)
+    _README_TECNICO.write_text(content, encoding="utf-8")
+    _ok(f"README_TECNICO.md gerado  ({_README_TECNICO.relative_to(_ROOT_DIR)})")
+
+
+# ─── Metadados do executável (VSVersionInfo) ────────────────────────────────
+def _generate_exe_version_file(version: str) -> None:
+    """Gera exe_version_info.txt no formato VSVersionInfo do PyInstaller.
+
+    O arquivo é lido por ``--version-file`` durante a compilação e embute os
+    metadados visíveis em Propriedades → Detalhes do .exe no Windows Explorer.
+    """
+    parts = version.split(".")
+    while len(parts) < 4:
+        parts.append("0")
+    v    = tuple(int(p) for p in parts[:4])
+    year = datetime.datetime.now().year
+    content = (
+        "# -*- coding: utf-8 -*-\n"
+        "# Gerado automaticamente por build_release.py — nao edite manualmente.\n"
+        "VSVersionInfo(\n"
+        "  ffi=FixedFileInfo(\n"
+        f"    filevers=({v[0]}, {v[1]}, {v[2]}, {v[3]}),\n"
+        f"    prodvers=({v[0]}, {v[1]}, {v[2]}, {v[3]}),\n"
+        "    mask=0x3f,\n"
+        "    flags=0x0,\n"
+        "    OS=0x40004,\n"
+        "    fileType=0x1,\n"
+        "    subtype=0x0,\n"
+        "    date=(0, 0)\n"
+        "  ),\n"
+        "  kids=[\n"
+        "    StringFileInfo(\n"
+        "      [StringTable(\n"
+        "        u'041604B0',\n"
+        "        [StringStruct(u'CompanyName', u'Quallit'),\n"
+        "        StringStruct(u'FileDescription', u'Service Control'),\n"
+        f"        StringStruct(u'FileVersion', u'{version}'),\n"
+        "        StringStruct(u'InternalName', u'ServiceControl'),\n"
+        f"        StringStruct(u'LegalCopyright', u'\\xa9 {year} Quallit. Todos os direitos reservados.'),\n"
+        "        StringStruct(u'OriginalFilename', u'ServiceControl.exe'),\n"
+        "        StringStruct(u'ProductName', u'Service Control'),\n"
+        f"        StringStruct(u'ProductVersion', u'{version}')])]),\n"
+        "    VarFileInfo([VarStruct(u'Translation', [0x0416, 1200])])\n"
+        "  ]\n"
+        ")\n"
+    )
+    _EXE_VERSION_TXT.write_text(content, encoding="utf-8")
+    _ok(f"exe_version_info.txt gerado  ({version})")
+
+
 # ─── Helpers de console ──────────────────────────────────────────────────────
 _C_CYAN   = "\033[96m"
 _C_GREEN  = "\033[92m"
@@ -190,6 +293,8 @@ def _clean_artifacts() -> None:
 
 # ─── Build ────────────────────────────────────────────────────────────────────
 def _run_pyinstaller(version: str):
+    _generate_exe_version_file(version)
+
     icon_arg = []
     icon_file = _GUI_DIR / "assets" / "icon.ico"
     if icon_file.exists():
@@ -216,6 +321,7 @@ def _run_pyinstaller(version: str):
         f"--workpath={_BUILD_DIR}",
         "--noconfirm",
         "--clean",
+        f"--version-file={_EXE_VERSION_TXT}",
         *icon_arg,
         *data_args,
         str(_MAIN_PY),
@@ -234,7 +340,7 @@ def _generate_zips(version: str) -> bool:
         d.mkdir(parents=True, exist_ok=True)
 
     # ── ZIP RELEASE ──────────────────────────────────────────────────────────
-    # Conteúdo: ServiceControl.exe + docs/README.md (manual entregue ao usuário)
+    # Conteúdo: ServiceControl.exe + docs/README.md (manual) + README_TECNICO.md
     release_zip = _RELEASE_DIR / f"{_PROJ_NAME}_RELEASE-{version}-{date_str}.zip"
     _info(f"Destino RELEASE: {release_zip}")
     try:
@@ -252,6 +358,11 @@ def _generate_zips(version: str) -> bool:
                 _ok("  + README.md  (Manual de Uso)")
             else:
                 _warn(f"  Manual não encontrado: {manual_src}")
+            if _README_TECNICO.exists():
+                zf.write(_README_TECNICO, "README_TECNICO.md")
+                _ok("  + README_TECNICO.md")
+            else:
+                _warn("  README_TECNICO.md não encontrado — execute build completo")
         sz = round(release_zip.stat().st_size / (1024 ** 2), 1)
         _ok(f"{release_zip.name}  ({sz} MB)")
     except Exception as exc:
@@ -278,6 +389,11 @@ def _generate_zips(version: str) -> bool:
                 if str(rel).replace("/", "\\") in _BACKUP_EXCLUDE_FILES:
                     continue
                 zf.write(file, Path(_PROJ_NAME) / rel)
+                count += 1
+            # README_TECNICO está em dist/ (excluído do rglob) — adiciona explicitamente
+            if _README_TECNICO.exists():
+                zf.write(_README_TECNICO, Path(_PROJ_NAME) / "README_TECNICO.md")
+                _ok("  + README_TECNICO.md")
                 count += 1
         sz = round(backup_zip.stat().st_size / (1024 ** 2), 1)
         _ok(f"{backup_zip.name}  ({sz} MB)  — {count} arquivo(s)")
@@ -322,6 +438,10 @@ def main():
     else:
         _warn("Executável não encontrado no caminho esperado — verifique o log acima.")
 
+    # Etapa 2.5: README_TECNICO.md
+    _banner("Etapa 2.5 — README_TECNICO.md")
+    _generate_readme_tecnico(new_ver)
+
     # Etapa 3: ZIPs
     _banner("Etapa 3/3 — ZIPs Release e Backup")
     if not _generate_zips(new_ver):
@@ -334,6 +454,12 @@ def main():
         _ok(f"Removido: {_BUILD_DIR.relative_to(_ROOT_DIR)}")
     else:
         _info(f"Já limpo:  {_BUILD_DIR.relative_to(_ROOT_DIR)}")
+    if _EXE_VERSION_TXT.exists():
+        _EXE_VERSION_TXT.unlink()
+        _ok(f"Removido: {_EXE_VERSION_TXT.relative_to(_ROOT_DIR)}")
+    if _README_TECNICO.exists():
+        _README_TECNICO.unlink()
+        _ok(f"Removido: {_README_TECNICO.relative_to(_ROOT_DIR)}")
 
     _banner(f"Build concluído — v{new_ver}")
 

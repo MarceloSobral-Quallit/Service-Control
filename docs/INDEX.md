@@ -1,7 +1,7 @@
 # Service Control — Índice de Documentação
 
 **Mantenedor:** Quallit Dev Team — desenv@quallit.com.br  
-**Versão:** 1.19.05.26
+**Versão:** 1.22.05.26
 
 ---
 

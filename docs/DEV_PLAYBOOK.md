@@ -1,7 +1,7 @@
 # Service Control — DEV Playbook
 
 **Mantenedor:** Quallit Dev Team — desenv@quallit.com.br  
-**Versão:** 1.19.05.26
+**Versão:** 1.22.05.26
 
 ---
 
@@ -32,7 +32,7 @@ O projeto é composto por três camadas independentes que podem ser usadas separ
                         │ chamado por
 ┌───────────────────────▼─────────────────────────────┐
 │  Camada 2 — Install scripts (PS1)                   │
-│  install-shortcuts[-ng].ps1                         │
+│  install-shortcuts.ps1                              │
 │  Responsabilidade: copiar toggle para ProgramData   │
 │  e criar atalhos no Menu Iniciar                    │
 └────────────┬─────────────────────────┬──────────────┘
@@ -66,11 +66,13 @@ Service-Control/
 │
 ├── GUI/
 │   ├── main.py                 # Entrypoint Tkinter; chama install-shortcuts.ps1
-│   ├── version_info.txt        # Fonte de verdade da versão da GUI
-│   └── tools/
-│       └── build_release.py    # Pipeline de build PyInstaller
+│   ├── requirements.txt        # Dependências Python (pyinstaller>=6.0)
+│   └── version_info.txt        # Fonte de verdade da versão da GUI
 │
 └── tools/
+    ├── build_release.py        # Pipeline de build PyInstaller
+    ├── build_release.bat       # Wrapper de entrada para o build
+    ├── certs/                  # Certificados de assinatura (não versionados)
     └── git/
         └── github_sync.py      # Sincronização com GitHub
 ```
@@ -194,24 +196,50 @@ Percorre todos os `.ps1` do projeto e avisa (sem bloquear o build) sobre arquivo
 
 **Etapa 2 — PyInstaller**
 
+Antes de compilar, gera `GUI/exe_version_info.txt` no formato VSVersionInfo com os metadados
+visíveis em **Propriedades → Detalhes** do `.exe` no Windows Explorer
+(empresa, produto, versão, direitos autorais, idioma).
+
 - `--onefile --windowed` — executável único sem console
+- `--version-file GUI/exe_version_info.txt` — embute metadados no .exe
 - `--add-data VMWARE:VMWARE` (e idem para FORTINET, VIRTUALBOX, OPENVPN) — embarca os PS1
 - Saída: `GUI/dist/ServiceControl.exe`
+
+**Etapa 2.5 — README_TECNICO.md**
+
+Após o executável ser gerado, gera `GUI/dist/README_TECNICO.md` com os metadados do build:
+
+| Campo | Conteúdo |
+|---|---|
+| Aplicativo | Service Control |
+| Versão | sincronizada com `version_info.txt` |
+| Empresa | Quallit |
+| Data do Build | timestamp da compilação |
+| Python | versão do interpretador usado |
+| PyInstaller | versão do compilador |
+| Plataforma alvo | Windows 10/11 x64 |
+| Assinatura Digital | *Não assinado* (este projeto não usa signtool) |
+
+Incluído obrigatoriamente em **todos os ZIPs** (RELEASE e BACKUP). Deletado na limpeza final.
 
 **Etapa 3 — ZIPs**
 
 | ZIP | Destino | Conteúdo |
 |---|---|---|
-| RELEASE | `C:\DESENV\PROJECT_RELEASE\ServiceControl_RELEASE-{ver}-{data}.zip` | `ServiceControl.exe` + `README.md` (manual) |
-| BACKUP | `C:\DESENV\PROJECT_BACKUP\ServiceControl_BACKUP-{ver}-{data}.zip` | Código-fonte completo (sem artefatos) |
-
-O ZIP RELEASE é o pacote a entregar ao usuário — contém o executável e o `README.md` de `docs/` como manual de uso.
+| RELEASE | `C:\DESENV\PROJECT_RELEASE\ServiceControl_RELEASE-{ver}-{data}.zip` | `ServiceControl.exe` + `README.md` (manual) + `README_TECNICO.md` |
+| BACKUP | `C:\DESENV\PROJECT_BACKUP\ServiceControl_BACKUP-{ver}-{data}.zip` | Código-fonte completo (sem artefatos) + `README_TECNICO.md` |
 
 Arquivos excluídos do BACKUP: `dist/`, `build/`, `__pycache__/`, `.git/`, `.specstory/`, `temp/`, `.pyc`, `.spec`, `.pfx`, `tools/git/github_sync.ini`.
+O `README_TECNICO.md` está em `dist/` (excluído do rglob), por isso é adicionado explicitamente ao BACKUP.
 
 **Limpeza final**
 
-Após os ZIPs, remove `GUI/build/` (arquivos temporários do PyInstaller). `GUI/dist/` é mantida com o executável gerado.
+Após os ZIPs, remove:
+- `GUI/build/` — arquivos temporários do PyInstaller
+- `GUI/exe_version_info.txt` — arquivo VSVersionInfo gerado para `--version-file`
+- `GUI/dist/README_TECNICO.md` — arquivo de metadados do build
+
+`GUI/dist/` é mantida com o executável gerado.
 
 ### Scripts embarcados
 
@@ -244,6 +272,35 @@ O driver `vboxnetadp` (NDIS miniport) não pode ser parado enquanto o adaptador 
 
 Sem essa ordem, `Stop-Service vboxnetadp` falha com erro de permissão.
 
+### VMware — Habilitação de adaptadores (Enable)
+
+As NICs virtuais VMnet1 e VMnet8 são criadas pelos serviços VMware. Após iniciar os serviços,
+os adaptadores podem demorar vários segundos para sair do estado `Not Present` — tempo
+insuficiente para um `Start-Sleep` fixo.
+
+O modo Enable usa polling real (função `Wait-VMwareAdaptersPresent`) com timeout de 30 segundos:
+
+```powershell
+function Wait-VMwareAdaptersPresent {
+    param([int]$TimeoutSec = 30)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    do {
+        $still = Get-NetAdapter -IncludeHidden | Where-Object {
+            ($_.InterfaceDescription -like '*VMware*' -or $_.Name -like 'VMnet*') -and
+            $_.Status -in 'Not Present', 'NotPresent'
+        }
+        if (-not $still) { return $true }
+        Start-Sleep -Seconds 1
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
+```
+
+Ordem do Enable:
+1. **Inicia serviços** (VMAuthdService, VMnetDHCP, VMUSBArbService, VMnetBridge, VMware NAT Service)
+2. **Aguarda** adaptadores saírem de `Not Present` (polling até 30 s)
+3. **Habilita adaptadores** VMnet1 / VMnet8 via `Enable-NetAdapter`
+
 ---
 
 ## Versionamento
@@ -270,7 +327,7 @@ A cada build, `build_release.py` propaga a nova versão automaticamente para:
 | `docs/DEV_PLAYBOOK.md` | `**Versão:**` no cabeçalho |
 | `docs/INDEX.md` | `**Versão:**` no cabeçalho |
 
-O `version_info.txt` da raiz (`Service-Control/version_info.txt`) é atualizado manualmente — representa a versão do projeto geral, enquanto `GUI/version_info.txt` representa especificamente o executável.
+O `version_info.txt` da raiz (`Service-Control/version_info.txt`) é atualizado **automaticamente** a cada build — mantido em sincronia com `GUI/version_info.txt` pelo `build_release.py` para que o `github_sync.py` sempre leia a versão correta.
 
 ---
 
