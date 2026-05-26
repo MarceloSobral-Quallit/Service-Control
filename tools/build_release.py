@@ -2,27 +2,36 @@
 # -*- coding: utf-8 -*-
 # ─────────────────────────────────────────────────────────────────────────────
 # Service Control  |  Tools  |  build_release.py
-# Pipeline de build PyInstaller — gera o executavel ServiceControl.exe.
+# Pipeline de build PyInstaller — gera ServiceControl_install.exe e _portable.exe
 #
 # © Quallit — Projeto proprietário. Todos os direitos reservados.
 # ─────────────────────────────────────────────────────────────────────────────
 #
+# Variantes:
+#   install  — --runtime-tmpdir C:\ProgramData\ServiceControl\runtime
+#              Extrai apenas na 1ª execução; subsequentes iniciam sem re-extração.
+#              Se auto-instala em ProgramData e cria atalho no Menu Iniciar.
+#   portable — sem --runtime-tmpdir; extrai em %TEMP%\_MEIxxxxx\ a cada run.
+#              Não se auto-instala.
+#
 # Etapas:
-#   0. Verificação de encoding (.ps1 com não-ASCII sem UTF-8 BOM → aviso)
-#   1. Bump de versão (Minor + MM/YY) + sync em README.md e docs/
-#   2. Compilação PyInstaller:
-#      - Gera GUI/exe_version_info.txt (VSVersionInfo) → metadados em Propriedades → Detalhes
-#      - Compila onefile/windowed com --version-file + --add-data (scripts embarcados)
-#   2.5 README_TECNICO.md → metadados do build; incluído em todos os ZIPs; deletado após
-#   3. ZIP RELEASE → C:\DESENV\PROJECT_RELEASE\ServiceControl_RELEASE-{ver}-{data}.zip
-#      ZIP BACKUP  → C:\DESENV\PROJECT_BACKUP\ServiceControl_BACKUP-{ver}-{data}.zip
+#   0.   Verificação de encoding (.ps1 com não-ASCII sem UTF-8 BOM → aviso)
+#   1.   Bump de versão (Minor + MM/YY) + sync em README.md e docs/
+#   2.   Para cada variante:
+#        2a. Gera GUI/exe_version_info.txt (VSVersionInfo)
+#        2b. Compila onefile/windowed com --version-file + --add-data + variante extra_args
+#        2c. Assina o .exe (se QUALLIT_SIGN_PFX/QUALLIT_SIGN_PASSWORD presentes)
+#   2.5  README_TECNICO.md → metadados + variantes + assinatura; incluído nos ZIPs; deletado após
+#   3.   ZIP RELEASE → C:\DESENV\PROJECT_RELEASE\ServiceControl_RELEASE-{ver}-{data}.zip
+#        ZIP BACKUP  → C:\DESENV\PROJECT_BACKUP\ServiceControl_BACKUP-{ver}-{data}.zip
 #
 # Uso:
-#   python tools/build_release.py
-#   (ou via build_release.bat)
+#   python tools/build_release.py [install|portable|both]   # padrão: both
+#   (ou via build_menu.bat opções 4–7)
 # ─────────────────────────────────────────────────────────────────────────────
 
 import datetime
+import os
 import re
 import shutil
 import subprocess
@@ -46,6 +55,32 @@ APP_NAME = "ServiceControl"
 # Pastas de serviço a embarcar no executável via --add-data.
 # Cada pasta é extraída em sys._MEIPASS/<nome> em tempo de execução.
 _SERVICE_DIRS = ["VMWARE", "FORTINET", "VIRTUALBOX", "OPENVPN"]
+
+# ─── Variantes de build ──────────────────────────────────────────────────────
+# install  — usa --runtime-tmpdir fixo em ProgramData: extração apenas na 1ª
+#            execução (ou ao atualizar); subsequentes iniciam sem re-extração.
+# portable — extrai em %TEMP%\_MEIxxxxx\ a cada execução; não se instala.
+VARIANTS: dict[str, dict] = {
+    "install": {
+        "exe_name":    "ServiceControl_install",
+        "description": "Install  — runtime fixo em ProgramData (startup rápido)",
+        "extra_args":  ["--runtime-tmpdir", r"C:\ProgramData\ServiceControl\runtime"],
+    },
+    "portable": {
+        "exe_name":    "ServiceControl_portable",
+        "description": "Portable — extração em %TEMP% a cada execução",
+        "extra_args":  [],
+    },
+}
+
+# ─── Assinatura digital ──────────────────────────────────────────────────────
+# Coloque o .pfx em tools/certs/ e defina QUALLIT_SIGN_PASSWORD no ambiente.
+# Variáveis de ambiente reconhecidas (padrão Quallit §9):
+#   QUALLIT_SIGN_PFX        → caminho do .pfx  (padrão: tools/certs/quallit_codesign.pfx)
+#   QUALLIT_SIGN_PASSWORD   → senha do .pfx
+#   QUALLIT_SIGN_TIMESTAMP  → URL do servidor de timestamp (padrão: DigiCert)
+_CERTS_DIR    = _TOOLS_DIR / "certs"
+_SIGN_LOG_DIR = _TOOLS_DIR / "build_log" / "signtool"
 
 # ─── Constantes de ZIP ───────────────────────────────────────────────────────
 _PROJ_NAME   = "ServiceControl"
@@ -145,7 +180,11 @@ def _write_version(version: str):
 
 
 # ─── README_TECNICO.md ─────────────────────────────────────────────────────────────────────
-def _generate_readme_tecnico(version: str) -> None:
+def _generate_readme_tecnico(
+    version: str,
+    sign_results: "dict[str, tuple[bool, str, str]]",
+    variants_built: "list[str]",
+) -> None:
     """Gera README_TECNICO.md em dist/ com metadados do build.
 
     Obrigatório em todos os ZIPs (RELEASE e BACKUP) conforme padrão Quallit §8.
@@ -168,6 +207,25 @@ def _generate_readme_tecnico(version: str) -> None:
     except Exception:
         pass
 
+    # ── Tabela de variantes geradas ──────────────────────────────────────────
+    _RUNTIME_LABELS = {
+        "install":  r"`C:\ProgramData\ServiceControl\runtime` (fixo)",
+        "portable": r"`%TEMP%\_MEIxxxxx\` (temporário)",
+    }
+    variants_rows = ""
+    for vkey in variants_built:
+        exe_name = VARIANTS[vkey]["exe_name"] + ".exe"
+        runtime  = _RUNTIME_LABELS.get(vkey, "—")
+        variants_rows += f"| `{exe_name}` | {vkey.capitalize()} | {runtime} |\n"
+
+    # ── Tabela de assinatura ─────────────────────────────────────────────────
+    sign_rows = ""
+    for vkey in variants_built:
+        exe_name = VARIANTS[vkey]["exe_name"] + ".exe"
+        signed, cn, thumb = sign_results.get(exe_name, (False, "—", "—"))
+        status = "✔ Assinado" if signed else "✘ Não assinado"
+        sign_rows += f"| `{exe_name}` | {status} | {cn} | {thumb} |\n"
+
     content = (
         "# Service Control — Informações Técnicas\n\n"
         "## Metadados do Build\n\n"
@@ -180,13 +238,14 @@ def _generate_readme_tecnico(version: str) -> None:
         f"| **Python** | {py_ver} |\n"
         f"| **PyInstaller** | {pi_ver} |\n"
         "| **Plataforma alvo** | Windows 10/11 x64 |\n\n"
+        "## Variantes Geradas\n\n"
+        "| Arquivo | Tipo | Runtime de extração |\n"
+        "|---|---|---|\n"
+        f"{variants_rows}\n"
         "## Assinatura Digital\n\n"
-        "| Campo | Valor |\n"
-        "|---|---|\n"
-        "| **Status** | Não assinado |\n"
-        "| **Certificado** | — |\n"
-        "| **Thumbprint** | — |\n"
-        "| **Timestamp** | — |\n\n"
+        "| Arquivo | Status | Certificado (CN) | Thumbprint |\n"
+        "|---|---|---|---|\n"
+        f"{sign_rows}\n"
         "---\n"
         f"*Gerado automaticamente em: {now_str}*\n"
     )
@@ -197,7 +256,7 @@ def _generate_readme_tecnico(version: str) -> None:
 
 
 # ─── Metadados do executável (VSVersionInfo) ────────────────────────────────
-def _generate_exe_version_file(version: str) -> None:
+def _generate_exe_version_file(version: str, original_filename: str = "ServiceControl.exe") -> None:
     """Gera exe_version_info.txt no formato VSVersionInfo do PyInstaller.
 
     O arquivo é lido por ``--version-file`` durante a compilação e embute os
@@ -231,7 +290,7 @@ def _generate_exe_version_file(version: str) -> None:
         f"        StringStruct(u'FileVersion', u'{version}'),\n"
         "        StringStruct(u'InternalName', u'ServiceControl'),\n"
         f"        StringStruct(u'LegalCopyright', u'\\xa9 {year} Quallit. Todos os direitos reservados.'),\n"
-        "        StringStruct(u'OriginalFilename', u'ServiceControl.exe'),\n"
+        f"        StringStruct(u'OriginalFilename', u'{original_filename}'),\n"
         "        StringStruct(u'ProductName', u'Service Control'),\n"
         f"        StringStruct(u'ProductVersion', u'{version}')])]),\n"
         "    VarFileInfo([VarStruct(u'Translation', [0x0416, 1200])])\n"
@@ -239,7 +298,110 @@ def _generate_exe_version_file(version: str) -> None:
         ")\n"
     )
     _EXE_VERSION_TXT.write_text(content, encoding="utf-8")
-    _ok(f"exe_version_info.txt gerado  ({version})")
+    _ok(f"exe_version_info.txt gerado  ({version} / {original_filename})")
+
+
+# ─── Assinatura digital ──────────────────────────────────────────────────────
+def _find_signtool() -> "Path | None":
+    """Localiza signtool.exe no Windows SDK ou no PATH."""
+    sdk_base = Path(r"C:\Program Files (x86)\Windows Kits\10\bin")
+    if sdk_base.exists():
+        candidates = sorted(sdk_base.glob("*/x64/signtool.exe"), reverse=True)
+        if candidates:
+            return candidates[0]
+        direct = sdk_base / "x64" / "signtool.exe"
+        if direct.exists():
+            return direct
+    from shutil import which as _which
+    found = _which("signtool.exe")
+    return Path(found) if found else None
+
+
+def _get_sign_info(exe_path: Path) -> "tuple[str, str]":
+    """Extrai CN e Thumbprint do executável assinado via Get-AuthenticodeSignature."""
+    ps = (
+        f'$s = Get-AuthenticodeSignature "{exe_path}"; '
+        f'"$($s.SignerCertificate.Subject)|$($s.SignerCertificate.Thumbprint)"'
+    )
+    try:
+        r = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=15,
+        )
+        out = r.stdout.strip()
+        if "|" in out:
+            subject, thumb = out.split("|", 1)
+            cn = next(
+                (f.strip()[3:] for f in subject.split(",") if f.strip().startswith("CN=")),
+                subject.strip()
+            )
+            return cn, thumb
+    except Exception:
+        pass
+    return "—", "—"
+
+
+def _sign_exe(exe_path: Path) -> "tuple[bool, str, str]":
+    """Assina o executável com signtool. Retorna (signed, cn, thumbprint).
+
+    Pré-requisitos (opcionais — sem eles a assinatura é pulada com aviso):
+      - tools/certs/quallit_codesign.pfx  (ou QUALLIT_SIGN_PFX)
+      - env QUALLIT_SIGN_PASSWORD  →  senha do .pfx
+    """
+    pfx_files = list(_CERTS_DIR.glob("*.pfx"))
+    default_pfx = _CERTS_DIR / "quallit_codesign.pfx"
+    pfx_env     = os.environ.get("QUALLIT_SIGN_PFX", "")
+
+    if pfx_env:
+        pfx = Path(pfx_env)
+        if not pfx.exists():
+            _warn(f"  Assinatura {exe_path.name}: QUALLIT_SIGN_PFX aponta para arquivo inexistente — pulando.")
+            return False, "—", "—"
+    elif default_pfx.exists():
+        pfx = default_pfx
+    elif pfx_files:
+        pfx = pfx_files[0]
+    else:
+        _warn(f"  Assinatura {exe_path.name}: .pfx não encontrado em tools/certs/ — pulando.")
+        return False, "—", "—"
+
+    password  = os.environ.get("QUALLIT_SIGN_PASSWORD", "QuallitRDAssist_Password")
+    timestamp = os.environ.get("QUALLIT_SIGN_TIMESTAMP", "http://timestamp.digicert.com")
+    if not password:
+        _warn(f"  Assinatura {exe_path.name}: QUALLIT_SIGN_PASSWORD não definida — pulando.")
+        return False, "—", "—"
+
+    signtool = _find_signtool()
+    if not signtool:
+        _warn(f"  Assinatura {exe_path.name}: signtool.exe não encontrado — pulando.")
+        return False, "—", "—"
+
+    _SIGN_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    sign_log = _SIGN_LOG_DIR / "sign.log"
+
+    cmd = [
+        str(signtool), "sign",
+        "/f",  str(pfx),
+        "/p",  password,
+        "/tr", timestamp,
+        "/td", "sha256",
+        "/fd", "sha256",
+        "/v",
+        str(exe_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with sign_log.open("a", encoding="utf-8") as fh:
+        fh.write(f"\n[{ts}] {exe_path.name}\n{result.stdout}{result.stderr}")
+
+    if result.returncode != 0:
+        _err(f"  Falha na assinatura ({exe_path.name}): {result.stderr.strip()}")
+        return False, "—", "—"
+
+    _ok(f"  {exe_path.name} assinado.")
+    cn, thumb = _get_sign_info(exe_path)
+    return True, cn, thumb
 
 
 # ─── Helpers de console ──────────────────────────────────────────────────────
@@ -292,8 +454,12 @@ def _clean_artifacts() -> None:
 
 
 # ─── Build ────────────────────────────────────────────────────────────────────
-def _run_pyinstaller(version: str):
-    _generate_exe_version_file(version)
+def _run_pyinstaller(version: str, variant_key: str) -> bool:
+    """Compila uma variante específica (install ou portable)."""
+    variant  = VARIANTS[variant_key]
+    exe_name = variant["exe_name"]
+
+    _generate_exe_version_file(version, exe_name + ".exe")
 
     icon_arg = []
     icon_file = _GUI_DIR / "assets" / "icon.ico"
@@ -316,7 +482,7 @@ def _run_pyinstaller(version: str):
         sys.executable, "-m", "PyInstaller",
         "--onefile",
         "--windowed",
-        "--name", APP_NAME,
+        "--name", exe_name,
         f"--distpath={_DIST_DIR}",
         f"--workpath={_BUILD_DIR}",
         "--noconfirm",
@@ -324,15 +490,17 @@ def _run_pyinstaller(version: str):
         f"--version-file={_EXE_VERSION_TXT}",
         *icon_arg,
         *data_args,
+        *variant["extra_args"],
         str(_MAIN_PY),
     ]
+    _info(f"Variante: {variant['description']}")
     _info(f"Comando: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=str(_GUI_DIR))
     return result.returncode == 0
 
 
 # ─── ZIPs de Release e Backup ────────────────────────────────────────────────
-def _generate_zips(version: str) -> bool:
+def _generate_zips(version: str, variants_built: "list[str]") -> bool:
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     success  = True
 
@@ -340,18 +508,20 @@ def _generate_zips(version: str) -> bool:
         d.mkdir(parents=True, exist_ok=True)
 
     # ── ZIP RELEASE ──────────────────────────────────────────────────────────
-    # Conteúdo: ServiceControl.exe + docs/README.md (manual) + README_TECNICO.md
+    # Conteúdo: variante(s) .exe + docs/README.md (manual) + README_TECNICO.md
     release_zip = _RELEASE_DIR / f"{_PROJ_NAME}_RELEASE-{version}-{date_str}.zip"
     _info(f"Destino RELEASE: {release_zip}")
     try:
         release_zip.unlink(missing_ok=True)
         with zipfile.ZipFile(release_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            exe_src = _DIST_DIR / f"{APP_NAME}.exe"
-            if exe_src.exists():
-                zf.write(exe_src, f"{APP_NAME}.exe")
-                _ok(f"  + {APP_NAME}.exe")
-            else:
-                _warn(f"  Executável não encontrado: {exe_src.name}")
+            for vkey in variants_built:
+                exe_name = VARIANTS[vkey]["exe_name"] + ".exe"
+                exe_src  = _DIST_DIR / exe_name
+                if exe_src.exists():
+                    zf.write(exe_src, exe_name)
+                    _ok(f"  + {exe_name}")
+                else:
+                    _warn(f"  Executável não encontrado: {exe_name}")
             manual_src = _ROOT_DIR / "docs" / "README.md"
             if manual_src.exists():
                 zf.write(manual_src, "README.md")
@@ -406,7 +576,19 @@ def _generate_zips(version: str) -> bool:
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main():
-    _banner("Service Control — Build Release")
+    # Determina variante(s) a compilar (argumento opcional)
+    # Uso: python build_release.py [install|portable|both]
+    variant_arg = sys.argv[1].lower() if len(sys.argv) > 1 else "both"
+    if variant_arg == "both":
+        variants_to_build = ["install", "portable"]
+    elif variant_arg in VARIANTS:
+        variants_to_build = [variant_arg]
+    else:
+        print(f"[ERR] Variante desconhecida: '{variant_arg}'. Use: install, portable, both")
+        sys.exit(1)
+
+    label = ", ".join(variants_to_build)
+    _banner(f"Service Control — Build Release  [{label}]")
 
     # Limpeza inicial
     _banner("Limpeza inicial — artefatos anteriores")
@@ -423,28 +605,35 @@ def main():
     _write_version(new_ver)
     _ok(f"{current}  →  {new_ver}")
 
-    # Etapa 2: Compilar
-    _banner("Etapa 2/3 — PyInstaller")
-    _info(f"Saída: {_DIST_DIR / APP_NAME}.exe")
+    # Etapa 2: Compilar cada variante + assinar
+    sign_results: dict[str, tuple[bool, str, str]] = {}
+    for idx, vkey in enumerate(variants_to_build, start=1):
+        variant  = VARIANTS[vkey]
+        exe_name = variant["exe_name"] + ".exe"
+        _banner(f"Etapa 2/3 — PyInstaller ({idx}/{len(variants_to_build)}: {vkey})")
+        _info(f"Saída: {_DIST_DIR / exe_name}")
 
-    if not _run_pyinstaller(new_ver):
-        _err("Build falhou.")
-        sys.exit(1)
+        if not _run_pyinstaller(new_ver, vkey):
+            _err(f"Build da variante '{vkey}' falhou.")
+            sys.exit(1)
 
-    exe = _DIST_DIR / f"{APP_NAME}.exe"
-    if exe.exists():
-        size_kb = exe.stat().st_size // 1024
-        _ok(f"Executável gerado: {exe}  ({size_kb} KB)")
-    else:
-        _warn("Executável não encontrado no caminho esperado — verifique o log acima.")
+        exe = _DIST_DIR / exe_name
+        if exe.exists():
+            _ok(f"Executável gerado: {exe.name}  ({exe.stat().st_size // 1024} KB)")
+        else:
+            _warn(f"Executável não encontrado: {exe_name} — verifique o log acima.")
+            continue
+
+        _info(f"Assinando {exe_name}...")
+        sign_results[exe_name] = _sign_exe(exe)
 
     # Etapa 2.5: README_TECNICO.md
     _banner("Etapa 2.5 — README_TECNICO.md")
-    _generate_readme_tecnico(new_ver)
+    _generate_readme_tecnico(new_ver, sign_results, variants_to_build)
 
     # Etapa 3: ZIPs
     _banner("Etapa 3/3 — ZIPs Release e Backup")
-    if not _generate_zips(new_ver):
+    if not _generate_zips(new_ver, variants_to_build):
         _warn("Um ou mais ZIPs não foram gerados. Verifique o log acima.")
 
     # Limpeza final
@@ -461,7 +650,7 @@ def main():
         _README_TECNICO.unlink()
         _ok(f"Removido: {_README_TECNICO.relative_to(_ROOT_DIR)}")
 
-    _banner(f"Build concluído — v{new_ver}")
+    _banner(f"Build concluído — v{new_ver}  [{label}]")
 
 
 if __name__ == "__main__":

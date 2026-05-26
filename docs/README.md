@@ -1,7 +1,7 @@
 # Service Control — Manual de Uso
 
 **Mantenedor:** Quallit Dev Team — desenv@quallit.com.br  
-**Versão:** 1.22.05.26  
+**Versão:** 1.24.05.26  
 **Plataforma:** Windows 10 / 11 x64
 
 ---
@@ -110,6 +110,7 @@ Menu Iniciar > Programs > Service Control
 
 | Atalho | Ação |
 |---|---|
+| `Service Control — Instalador` | Abre a interface gráfica do instalador |
 | `VMware - Enable` | Habilita VMware completo e abre a interface |
 | `VMware - Disable` | Para e desabilita todos os serviços e adaptadores VMware |
 | `Fortinet - Enable` | Habilita FortiClient e abre a interface |
@@ -121,6 +122,8 @@ Menu Iniciar > Programs > Service Control
 | `OpenVPN - Disable` | Para e desabilita todos os serviços OpenVPN |
 
 > Os atalhos solicitam elevação via UAC automaticamente. Não é necessário abrir o PowerShell como Administrador manualmente.
+
+> **Auto-instalação:** na primeira execução do `ServiceControl.exe`, o aplicativo se copia automaticamente para `C:\ProgramData\ServiceControl\ServiceControl.exe` e cria o atalho `Service Control — Instalador` no Menu Iniciar. Ao executar uma versão mais nova, o exe em ProgramData é atualizado automaticamente. Ao executar a mesma versão, o programa inicia normalmente sem nenhuma cópia.
 
 ---
 
@@ -216,7 +219,10 @@ O processo executa automaticamente em ordem:
 1. Restaura o tipo de inicialização dos serviços para o padrão (Manual)
 2. Remove os atalhos de `Menu Iniciar > Programs > Service Control`
 3. Remove a pasta `C:\ProgramData\ServiceControl\<SERVIÇO>\`
-4. Remove `C:\ProgramData\ServiceControl\` se não restar nenhum serviço instalado
+4. Se não restar nenhum serviço instalado:
+   - Remove o atalho `Service Control — Instalador` do Menu Iniciar
+   - Remove `C:\ProgramData\ServiceControl\` (incluindo o `ServiceControl.exe` instalado)
+   - Remove a pasta `Service Control` do Menu Iniciar se ficou vazia
 
 ### Via menu.ps1
 

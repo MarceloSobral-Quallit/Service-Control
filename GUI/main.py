@@ -17,7 +17,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 # ─── Versão ──────────────────────────────────────────────────────────────────
-APP_VERSION = "1.22.05.26"
+APP_VERSION = "1.24.05.26"
 APP_TITLE   = "Service Control — Instalador"
 
 # ─── Caminhos base ────────────────────────────────────────────────────────────
@@ -33,6 +33,11 @@ else:
 _PROG_DATA_BASE    = Path(r"C:\ProgramData\ServiceControl")
 _START_MENU_FOLDER = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Service Control"
 _GUI_LOG_FILE      = _EXE_DIR / "ServiceControl_log.txt"
+
+# ─── Auto-instalação do exe em ProgramData ───────────────────────────────────
+_SELF_EXE_DEST    = _PROG_DATA_BASE / "ServiceControl.exe"
+_SELF_VERSION_TXT = _PROG_DATA_BASE / "ServiceControl_version.txt"
+_SELF_LNK         = _START_MENU_FOLDER / "Service Control — Instalador.lnk"
 
 # ─── Definição dos serviços ──────────────────────────────────────────────────
 SERVICES = [
@@ -126,6 +131,7 @@ class App(tk.Tk):
         self._log_to_file(f"Sessão iniciada — v{APP_VERSION}")
         self._log_to_file(f"{'='*60}")
         self._log_write(f"Service Control  v{APP_VERSION}", "info")
+        self._install_self_exe()
 
     # ── Layout ────────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -460,7 +466,7 @@ class App(tk.Tk):
             self._log_write(f"  Erro ao remover ProgramData\\{svc['dir']}: {exc}", "err")
 
     def _remove_progdata_base_if_empty(self):
-        """Remove C:\\ProgramData\\ServiceControl se não houver mais subpastas."""
+        """Remove C:\\ProgramData\\ServiceControl se não houver mais subpastas de serviço."""
         if not _PROG_DATA_BASE.exists():
             return
         remaining = [p for p in _PROG_DATA_BASE.iterdir() if p.is_dir()]
@@ -470,11 +476,25 @@ class App(tk.Tk):
                 f"({len(remaining)} serviço(s) ainda instalado(s)).", "info"
             )
             return
+        # Remove atalho do instalador antes de apagar a pasta base
+        if _SELF_LNK.exists():
+            try:
+                _SELF_LNK.unlink()
+                self._log_write(f"  Removido: {_SELF_LNK.name}", "ok")
+            except Exception as exc:
+                self._log_write(f"  Erro ao remover atalho do instalador: {exc}", "err")
         try:
             shutil.rmtree(str(_PROG_DATA_BASE))
             self._log_write("  Removido: ProgramData\\ServiceControl", "ok")
         except Exception as exc:
             self._log_write(f"  Erro ao remover ProgramData\\ServiceControl: {exc}", "err")
+        # Remove pasta do Menu Iniciar se ficou vazia
+        if _START_MENU_FOLDER.exists() and not any(_START_MENU_FOLDER.iterdir()):
+            try:
+                _START_MENU_FOLDER.rmdir()
+                self._log_write("  Removido: Menu Iniciar\\Service Control", "ok")
+            except Exception as exc:
+                self._log_write(f"  Erro ao remover pasta Menu Iniciar: {exc}", "err")
 
     def _on_cleanup(self):
         self._log_clear()
@@ -543,6 +563,81 @@ class App(tk.Tk):
                     self._log_write(f"  Erro: {f.name} — {exc}", "err")
         else:
             self._log_write("  Atalhos legados: operação cancelada.", "warn")
+
+    # ── Auto-instalação do exe ────────────────────────────────────────────────
+    def _install_self_exe(self):
+        """1ª execução: copia o .exe para ProgramData.
+        Execução posterior da mesma versão: inicia normalmente (skip).
+        Execução de versão mais nova: atualiza o .exe em ProgramData."""
+        if not getattr(sys, "frozen", False):
+            return  # modo dev — não copia nada
+
+        src = Path(sys.executable).resolve()
+
+        # Variante portable não se auto-instala
+        if "_portable" in src.stem:
+            return
+
+        # Já está rodando direto da pasta de destino — garante só o atalho
+        if src == _SELF_EXE_DEST.resolve():
+            self._ensure_self_lnk()
+            return
+
+        # Verifica versão já instalada
+        installed_version = ""
+        if _SELF_VERSION_TXT.exists():
+            try:
+                installed_version = _SELF_VERSION_TXT.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+
+        # Mesma versão já instalada — garante só o atalho
+        if installed_version == APP_VERSION and _SELF_EXE_DEST.exists():
+            self._ensure_self_lnk()
+            return
+
+        # Copia (1ª instalação ou atualização)
+        try:
+            _PROG_DATA_BASE.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(src), str(_SELF_EXE_DEST))
+            _SELF_VERSION_TXT.write_text(APP_VERSION, encoding="utf-8")
+            if installed_version:
+                self._log_write(
+                    f"  ServiceControl.exe atualizado: v{installed_version} → v{APP_VERSION}",
+                    "ok"
+                )
+            else:
+                self._log_write(
+                    f"  ServiceControl.exe instalado em ProgramData (v{APP_VERSION})",
+                    "ok"
+                )
+        except Exception as exc:
+            self._log_write(f"  Erro ao instalar exe em ProgramData: {exc}", "err")
+            return
+
+        self._ensure_self_lnk()
+
+    def _ensure_self_lnk(self):
+        """Cria o atalho do instalador no Menu Iniciar se não existir."""
+        if _SELF_LNK.exists():
+            return
+        try:
+            _START_MENU_FOLDER.mkdir(parents=True, exist_ok=True)
+            ps = (
+                f'$ws = New-Object -ComObject WScript.Shell; '
+                f'$lnk = $ws.CreateShortcut("{_SELF_LNK}"); '
+                f'$lnk.TargetPath = "{_SELF_EXE_DEST}"; '
+                f'$lnk.Description = "Service Control — Instalador"; '
+                f'$lnk.Save()'
+            )
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=10,
+            )
+            self._log_write(f"  Atalho criado: {_SELF_LNK.name}", "ok")
+        except Exception as exc:
+            self._log_write(f"  Erro ao criar atalho do instalador: {exc}", "err")
 
     # ── Centralizar janela ────────────────────────────────────────────────────
     def _center(self):

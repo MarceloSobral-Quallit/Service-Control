@@ -42,6 +42,8 @@ if "%ESCOLHA%"=="2" goto SYNC_NOPUSH
 if "%ESCOLHA%"=="3" goto DRYRUN
 if "%ESCOLHA%"=="4" goto BUILD_GUI
 if "%ESCOLHA%"=="5" goto BUILD_SYNC
+if "%ESCOLHA%"=="6" goto BUILD_INSTALL
+if "%ESCOLHA%"=="7" goto BUILD_PORTABLE
 if "%ESCOLHA%"=="0" goto FIM
 echo  Opcao invalida. Tente novamente.
 timeout /t 2 > nul
@@ -70,16 +72,16 @@ goto FIM
 
 :BUILD_GUI
 echo.
-echo  Compilando GUI...
+echo  Compilando ambas variantes (install + portable)...
 echo.
-python tools\build_release.py
+python tools\build_release.py both
 goto FIM
 
 :BUILD_SYNC
 echo.
-echo  Compilando GUI...
+echo  Compilando ambas variantes (install + portable)...
 echo.
-python tools\build_release.py
+python tools\build_release.py both
 if errorlevel 1 (
     echo.
     echo  Build falhou. Sync cancelado.
@@ -89,6 +91,20 @@ echo.
 echo  Iniciando sincronizacao com GitHub...
 echo.
 python tools\git\github_sync.py
+goto FIM
+
+:BUILD_INSTALL
+echo.
+echo  Compilando variante install...
+echo.
+python tools\build_release.py install
+goto FIM
+
+:BUILD_PORTABLE
+echo.
+echo  Compilando variante portable...
+echo.
+python tools\build_release.py portable
 goto FIM
 
 :FIM

@@ -1,2 +1,2 @@
-Versao: 1.22.05.26
-Atualizado em: 26/05/2026 15:20:56
+Versao: 1.24.05.26
+Atualizado em: 26/05/2026 18:59:30

@@ -1,7 +1,7 @@
 # Service Control — DEV Playbook
 
 **Mantenedor:** Quallit Dev Team — desenv@quallit.com.br  
-**Versão:** 1.22.05.26
+**Versão:** 1.24.05.26
 
 ---
 
@@ -164,7 +164,10 @@ cd ..
 
 ```powershell
 # A partir da raiz do projeto (Service-Control/)
-python tools\build_release.py
+python tools\build_release.py           # padrão: ambas variantes
+python tools\build_release.py both      # explícito — install + portable
+python tools\build_release.py install   # somente _install
+python tools\build_release.py portable  # somente _portable
 # ou via menu interativo:
 .\tools\build_menu.bat
 ```
@@ -194,16 +197,36 @@ Percorre todos os `.ps1` do projeto e avisa (sem bloquear o build) sobre arquivo
 | `docs/DEV_PLAYBOOK.md` | `**Versão:** x.xx.xx.xx` |
 | `docs/INDEX.md` | `**Versão:** x.xx.xx.xx` |
 
-**Etapa 2 — PyInstaller**
+**Etapa 2 — PyInstaller (por variante)**
 
-Antes de compilar, gera `GUI/exe_version_info.txt` no formato VSVersionInfo com os metadados
+Antes de cada compilação, gera `GUI/exe_version_info.txt` no formato VSVersionInfo com os metadados
 visíveis em **Propriedades → Detalhes** do `.exe` no Windows Explorer
-(empresa, produto, versão, direitos autorais, idioma).
+(empresa, produto, versão, direitos autorais, idioma). O campo `OriginalFilename` varia por variante.
 
+O pipeline compila duas variantes:
+
+| Variante | Exe gerado | Extra flag |
+|---|---|---|
+| `install` | `ServiceControl_install.exe` | `--runtime-tmpdir C:\ProgramData\ServiceControl\runtime` |
+| `portable` | `ServiceControl_portable.exe` | *(nenhuma — extrai em `%TEMP%` a cada run)* |
+
+Flags comuns a ambas:
 - `--onefile --windowed` — executável único sem console
 - `--version-file GUI/exe_version_info.txt` — embute metadados no .exe
 - `--add-data VMWARE:VMWARE` (e idem para FORTINET, VIRTUALBOX, OPENVPN) — embarca os PS1
-- Saída: `GUI/dist/ServiceControl.exe`
+- Saída: `GUI/dist/<nome_variante>.exe`
+
+Após cada compilação, o pipeline tenta **assinar** o executável:
+
+| Pré-requisito | Localização |
+|---|---|
+| Certificado `.pfx` | `tools/certs/quallit_codesign.pfx` (ou `QUALLIT_SIGN_PFX`) |
+| Senha do certificado | Variável de ambiente `QUALLIT_SIGN_PASSWORD` |
+| URL de timestamp | Variável de ambiente `QUALLIT_SIGN_TIMESTAMP` (padrão: DigiCert) |
+| `signtool.exe` | Windows SDK (`C:\Program Files (x86)\Windows Kits\10\bin\...`) ou PATH |
+
+Se qualquer pré-requisito estiver ausente, a assinatura é pulada com aviso e o build continua.
+O log de assinatura é gravado em `tools/build_log/signtool/sign.log`.
 
 **Etapa 2.5 — README_TECNICO.md**
 
@@ -218,7 +241,8 @@ Após o executável ser gerado, gera `GUI/dist/README_TECNICO.md` com os metadad
 | Python | versão do interpretador usado |
 | PyInstaller | versão do compilador |
 | Plataforma alvo | Windows 10/11 x64 |
-| Assinatura Digital | *Não assinado* (este projeto não usa signtool) |
+
+Por variante gerada: tipo (`install`/`portable`) + runtime de extração + status de assinatura (CN e Thumbprint se assinado).
 
 Incluído obrigatoriamente em **todos os ZIPs** (RELEASE e BACKUP). Deletado na limpeza final.
 
@@ -226,7 +250,7 @@ Incluído obrigatoriamente em **todos os ZIPs** (RELEASE e BACKUP). Deletado na 
 
 | ZIP | Destino | Conteúdo |
 |---|---|---|
-| RELEASE | `C:\DESENV\PROJECT_RELEASE\ServiceControl_RELEASE-{ver}-{data}.zip` | `ServiceControl.exe` + `README.md` (manual) + `README_TECNICO.md` |
+| RELEASE | `C:\DESENV\PROJECT_RELEASE\ServiceControl_RELEASE-{ver}-{data}.zip` | `ServiceControl_install.exe` + `ServiceControl_portable.exe` + `README.md` (manual) + `README_TECNICO.md` |
 | BACKUP | `C:\DESENV\PROJECT_BACKUP\ServiceControl_BACKUP-{ver}-{data}.zip` | Código-fonte completo (sem artefatos) + `README_TECNICO.md` |
 
 Arquivos excluídos do BACKUP: `dist/`, `build/`, `__pycache__/`, `.git/`, `.specstory/`, `temp/`, `.pyc`, `.spec`, `.pfx`, `tools/git/github_sync.ini`.
