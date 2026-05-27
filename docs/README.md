@@ -1,7 +1,7 @@
 # Service Control — Manual de Uso
 
 **Mantenedor:** Quallit Dev Team — desenv@quallit.com.br  
-**Versão:** 1.26.05.26  
+**Versão:** 1.27.05.26  
 **Plataforma:** Windows 10 / 11 x64
 
 ---
@@ -34,7 +34,7 @@ Service Control gerencia os serviços do Windows e os adaptadores de rede virtua
 | VirtualBox | Serviços VirtualBox + adaptadores VBoxNet         |
 | OpenVPN    | Serviço OpenVPN + adaptadores TAP                 |
 
-Cada serviço pode ser **habilitado** (inicia serviços + adaptadores) ou **desabilitado** (para serviços + adaptadores e define como `Disabled`). O estado `Disabled` garante que os serviços não consumam recursos na inicialização do Windows.
+Cada serviço pode ser **habilitado** (inicia serviços + adaptadores) ou **desabilitado** (para serviços + adaptadores e define como `Disabled`). O estado `Disabled` garante que os serviços não consumam recursos nem que os adaptadores de rede fiquem ativos. Uma **tarefa agendada de boot** (registrada automaticamente na instalação) reaplica o estado `Disabled` a cada reinicialização, independente do estado em que o sistema foi desligado.
 
 ---
 
@@ -49,7 +49,7 @@ Cada serviço pode ser **habilitado** (inicia serviços + adaptadores) ou **desa
 
 ## Instalação — Primeira Execução
 
-A instalação cria atalhos em `Menu Iniciar > Programs > Service Control` e copia os scripts de controle para `C:\ProgramData\ServiceControl\<SERVIÇO>\`. Após isso, o uso é feito exclusivamente pelos atalhos.
+A instalação cria atalhos em `Menu Iniciar > Programs > Service Control`, copia os scripts de controle para `C:\ProgramData\ServiceControl\<SERVIÇO>\` e registra uma **tarefa agendada de boot** (`\ServiceControl\ServiceControl_<SERVIÇO>_DisableAdaptersOnBoot`) no Agendador de Tarefas do Windows. Essa tarefa roda como `SYSTEM` a cada boot e garante que serviços e adaptadores voltem ao estado `Disabled` após qualquer reinicialização. Após a instalação, o uso diário é feito exclusivamente pelos atalhos.
 
 ### Opção 1 — Interface Gráfica (ServiceControl.exe)
 
@@ -148,6 +148,7 @@ Os scripts de toggle aceitam parâmetros adicionais para uso direto (PowerShell 
 | `-OpenGUI` | Abre VMware Player ou Workstation após habilitar |
 | `-NoUSB` | Não gerencia `VMUSBArbService` (driver USB) |
 | `-NoBridge` | Não gerencia `VMnetBridge` (rede bridge) |
+| `-NoWait` | Suprime a pausa de 15 s ao encerrar (usado pela tarefa de boot) |
 | `-LogDir <pasta>` | Pasta de logs alternativa |
 
 ### VirtualBox (`virtualbox-toggle.ps1`)
@@ -158,6 +159,13 @@ Os scripts de toggle aceitam parâmetros adicionais para uso direto (PowerShell 
 .\virtualbox-toggle.ps1 -Mode Disable
 ```
 
+| Parâmetro | Descrição |
+|---|---|
+| `-Mode Enable\|Disable` | Obrigatório |
+| `-OpenGUI` | Abre VirtualBox após habilitar |
+| `-NoWait` | Suprime a pausa de 15 s ao encerrar (usado pela tarefa de boot) |
+| `-LogDir <pasta>` | Pasta de logs alternativa |
+
 ### Fortinet (`fortinet-toggle.ps1`) e OpenVPN (`openvpn-toggle.ps1`)
 
 ```powershell
@@ -167,6 +175,12 @@ Os scripts de toggle aceitam parâmetros adicionais para uso direto (PowerShell 
 .\openvpn-toggle.ps1 -Mode Enable
 .\openvpn-toggle.ps1 -Mode Disable
 ```
+
+| Parâmetro | Descrição |
+|---|---|
+| `-Mode Enable\|Disable` | Obrigatório |
+| `-NoWait` | Suprime a pausa de 15 s ao encerrar (usado pela tarefa de boot) |
+| `-LogDir <pasta>` | Pasta de logs alternativa |
 
 ---
 
@@ -216,10 +230,11 @@ Se os scripts foram movidos de local, os atalhos podem apontar para caminhos ine
 3. Clique em **Desinstalar Selecionados**
 
 O processo executa automaticamente em ordem:
-1. Restaura o tipo de inicialização dos serviços para o padrão (Manual)
-2. Remove os atalhos de `Menu Iniciar > Programs > Service Control`
-3. Remove a pasta `C:\ProgramData\ServiceControl\<SERVIÇO>\`
-4. Se não restar nenhum serviço instalado:
+1. Remove a tarefa de boot do Agendador de Tarefas (`\ServiceControl\ServiceControl_<SERVIÇO>_DisableAdaptersOnBoot`)
+2. Restaura o tipo de inicialização dos serviços para o padrão (Manual)
+3. Remove os atalhos de `Menu Iniciar > Programs > Service Control`
+4. Remove a pasta `C:\ProgramData\ServiceControl\<SERVIÇO>\`
+5. Se não restar nenhum serviço instalado:
    - Remove o atalho `Service Control — Instalador` do Menu Iniciar
    - Remove `C:\ProgramData\ServiceControl\` (incluindo o `ServiceControl.exe` instalado)
    - Remove a pasta `Service Control` do Menu Iniciar se ficou vazia
@@ -229,10 +244,19 @@ O processo executa automaticamente em ordem:
 - Opções 11–15 removem atalhos de cada serviço
 - Para remover os scripts de ProgramData após: `Remove-Item -Recurse -Force "C:\ProgramData\ServiceControl"`
 
+> **Atenção:** as opções 11–15 do menu.ps1 removem apenas os atalhos do Menu Iniciar. A tarefa de boot **não é removida automaticamente** pelo menu. Para removê-la, use a GUI (recomendado) ou o comando manual abaixo.
+
 ### Manual
 
 ```powershell
-Remove-Item -Recurse -Force "%AppData%\Microsoft\Windows\Start Menu\Programs\Service Control"
+# Remover tarefa de boot de cada serviço (executar como Administrador)
+Unregister-ScheduledTask -TaskPath '\ServiceControl\' -TaskName 'ServiceControl_VMware_DisableAdaptersOnBoot'     -Confirm:$false
+Unregister-ScheduledTask -TaskPath '\ServiceControl\' -TaskName 'ServiceControl_Fortinet_DisableAdaptersOnBoot'  -Confirm:$false
+Unregister-ScheduledTask -TaskPath '\ServiceControl\' -TaskName 'ServiceControl_VirtualBox_DisableAdaptersOnBoot' -Confirm:$false
+Unregister-ScheduledTask -TaskPath '\ServiceControl\' -TaskName 'ServiceControl_OpenVPN_DisableAdaptersOnBoot'   -Confirm:$false
+
+# Remover atalhos e scripts
+Remove-Item -Recurse -Force "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Service Control"
 Remove-Item -Recurse -Force "C:\ProgramData\ServiceControl"
 ```
 
@@ -246,5 +270,6 @@ Remove-Item -Recurse -Force "C:\ProgramData\ServiceControl"
 | "Script bloqueado" / execução recusada | `Zone.Identifier` presente | Os scripts executam `Unblock-File` automaticamente; se persistir, execute manualmente: `Unblock-File .\*.ps1` |
 | Serviço não inicia após Enable | Serviço desinstalado ou com nome diferente | Verifique o log em `C:\ProgramData\ServiceControl\<SERVIÇO>\logs\` |
 | Adaptador de rede não habilita | Driver desinstalado | Reinstale o software (VMware, VirtualBox, etc.) |
+| Serviços voltam ativos após reboot | Tarefa de boot não registrada (instalação anterior) | Reinstale o serviço via GUI ou execute `install-shortcuts.ps1` novamente |
 | Atalho aponta para caminho antigo (DESENV) | Scripts foram movidos | Use opção 21 do menu.ps1 ou botão Limpar Legado na GUI |
 | GUI não abre / fecha imediatamente | Falta de privilégios | Clique com o botão direito no `.exe` > "Executar como administrador" |

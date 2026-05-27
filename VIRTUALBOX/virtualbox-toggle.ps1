@@ -33,6 +33,7 @@ param(
     [string]$Mode,
 
     [switch]$OpenGUI,
+    [switch]$NoWait,
 
     [string]$LogDir = ''
 )
@@ -205,8 +206,20 @@ function Toggle-VirtualBoxAdapters {
     foreach ($a in $adapters) {
         try {
             if ($Action -eq 'Disable' -and $a.Status -ne 'Disabled') {
-                Disable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop
-                Write-Log "Adaptador desabilitado : $($a.Name)" 'Green'
+                if ($a.Status -in 'Not Present', 'NotPresent') {
+                    $pnp = Get-PnpDevice -ErrorAction SilentlyContinue |
+                           Where-Object { $_.FriendlyName -eq $a.Name } |
+                           Select-Object -First 1
+                    if ($pnp) {
+                        Disable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false -ErrorAction Stop
+                        Write-Log "Adaptador desabilitado (PnP): $($a.Name)" 'Green'
+                    } else {
+                        Write-Log "Adaptador PnP nao encontrado: $($a.Name) [$($a.Status)]" 'Yellow'
+                    }
+                } else {
+                    Disable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop
+                    Write-Log "Adaptador desabilitado : $($a.Name)" 'Green'
+                }
             } elseif ($Action -eq 'Enable' -and $a.Status -ne 'Up') {
                 if ($a.Status -in 'Not Present', 'NotPresent') {
                     $pnp = Get-PnpDevice -ErrorAction SilentlyContinue |
@@ -324,6 +337,8 @@ else {
     Write-Log '--- VirtualBox desativado. ---' 'Green'
 }
 
-Write-Log 'Encerrando em 15 segundos...' 'DarkGray'
-Start-Sleep -Seconds 15
+if (-not $NoWait) {
+    Write-Log 'Encerrando em 15 segundos...' 'DarkGray'
+    Start-Sleep -Seconds 15
+}
 try { Stop-Transcript | Out-Null } catch {}

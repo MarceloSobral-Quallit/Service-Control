@@ -271,3 +271,34 @@ if ($DisableAllNow) {
 
     Write-Host "`nPronto. Use o atalho 'Enable' quando precisar do Fortinet." -ForegroundColor Green
 }
+
+# -----------------------------------------------------------------------
+# Tarefa agendada: desabilita adaptadores e servicos Fortinet a cada boot
+# Garante que interfaces ficam Disabled apos reboot, mesmo apos Enable.
+# -----------------------------------------------------------------------
+Write-Host "`nRegistrando tarefa de boot..." -ForegroundColor Cyan
+$bootTaskName = 'ServiceControl_Fortinet_DisableAdaptersOnBoot'
+$bootTaskPath = '\ServiceControl\'
+$bootAction   = New-ScheduledTaskAction `
+    -Execute  'powershell.exe' `
+    -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$togglePs1`" -Mode Disable -NoWait"
+$bootTrigger   = New-ScheduledTaskTrigger -AtStartup
+$bootPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+$bootSettings  = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
+    -StartWhenAvailable `
+    -MultipleInstances  IgnoreNew
+try {
+    Register-ScheduledTask `
+        -TaskName    $bootTaskName `
+        -TaskPath    $bootTaskPath `
+        -Action      $bootAction `
+        -Trigger     $bootTrigger `
+        -Principal   $bootPrincipal `
+        -Settings    $bootSettings `
+        -Description 'Service Control: desabilita servicos e adaptadores Fortinet a cada boot' `
+        -Force       -ErrorAction Stop | Out-Null
+    Write-Host "Tarefa de boot criada : ${bootTaskPath}${bootTaskName}" -ForegroundColor Green
+} catch {
+    Write-Host "Aviso: nao foi possivel criar tarefa de boot: $($_.Exception.Message)" -ForegroundColor Yellow
+}

@@ -17,7 +17,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 # ─── Versão ──────────────────────────────────────────────────────────────────
-APP_VERSION = "1.26.05.26"
+APP_VERSION = "1.27.05.26"
 APP_TITLE   = "Service Control — Instalador"
 
 # ─── Caminhos base ────────────────────────────────────────────────────────────
@@ -48,6 +48,7 @@ SERVICES = [
         "toggle":      "vmware-toggle.ps1",
         "shortcuts":   ["VMware - Enable.lnk",
                         "VMware - Disable.lnk"],
+        "boot_task":   "ServiceControl_VMware_DisableAdaptersOnBoot",
     },
     {
         "label":       "Fortinet",
@@ -56,6 +57,7 @@ SERVICES = [
         "toggle":      "fortinet-toggle.ps1",
         "shortcuts":   ["Fortinet - Enable.lnk",
                         "Fortinet - Disable.lnk"],
+        "boot_task":   "ServiceControl_Fortinet_DisableAdaptersOnBoot",
     },
     {
         "label":       "VirtualBox",
@@ -65,6 +67,7 @@ SERVICES = [
         "shortcuts":   ["VirtualBox - Enable.lnk",
                         "VirtualBox - Enable (sem abrir GUI).lnk",
                         "VirtualBox - Disable.lnk"],
+        "boot_task":   "ServiceControl_VirtualBox_DisableAdaptersOnBoot",
     },
     {
         "label":       "OpenVPN",
@@ -73,6 +76,7 @@ SERVICES = [
         "toggle":      "openvpn-toggle.ps1",
         "shortcuts":   ["OpenVPN - Enable.lnk",
                         "OpenVPN - Disable.lnk"],
+        "boot_task":   "ServiceControl_OpenVPN_DisableAdaptersOnBoot",
     },
 ]
 
@@ -317,6 +321,56 @@ class App(tk.Tk):
     def _selected_services(self) -> list[dict]:
         return [svc for svc in SERVICES if self._checks[svc["label"]].get()]
 
+    def _run_ps_inline(self, ps_command: str, label: str = ""):
+        """Executa um comando PowerShell inline e envia a saída para o log."""
+        cmd = [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-Command",
+            f'[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; {ps_command}',
+        ]
+        if label:
+            self._log_write(f"▶ {label}", "info")
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            self._procs.append(proc)
+            try:
+                for line in proc.stdout:
+                    line = line.rstrip()
+                    if not line:
+                        continue
+                    tag = ("ok"   if any(k in line for k in ("removida", "criada", "OK")) else
+                           "err"  if any(k in line for k in ("ERRO", "Error")) else
+                           "warn" if any(k in line for k in ("Aviso", "nao encontrada")) else
+                           "plain")
+                    self._log_write(f"  {line}", tag)
+                proc.wait()
+            finally:
+                if proc in self._procs:
+                    self._procs.remove(proc)
+        except Exception as exc:
+            self._log_write(f"  Erro: {exc}", "err")
+
+    def _remove_boot_task(self, task_name: str, label: str):
+        """Remove a Scheduled Task de boot para o serviço."""
+        ps = (
+            f'$t = Get-ScheduledTask -TaskName "{task_name}" -TaskPath "\\ServiceControl\\" '
+            f'-ErrorAction SilentlyContinue; '
+            f'if ($t) {{ '
+            f'Unregister-ScheduledTask -TaskName "{task_name}" -TaskPath "\\ServiceControl\\" '
+            f'-Confirm:$false -ErrorAction SilentlyContinue; '
+            f'Write-Output "Tarefa de boot removida: {task_name}" '
+            f'}} else {{ Write-Output "Tarefa de boot nao encontrada (ok): {task_name}" }}'
+        )
+        self._run_ps_inline(ps, f"Removendo tarefa de boot: {label}")
+
     # ── Executar script PS ────────────────────────────────────────────────────
     def _run_ps_script(self, script_path: Path, extra_args: list[str] | None = None):
         """Executa um script PowerShell e envia a saída para o log."""
@@ -412,6 +466,10 @@ class App(tk.Tk):
 
         def _worker():
             for svc in selected:
+                # Remove a tarefa de boot antes de desinstalar
+                task = svc.get("boot_task", "")
+                if task:
+                    self._remove_boot_task(task, svc["label"])
                 # Restaura o tipo de inicialização dos serviços para o padrão
                 # (Manual) antes de remover os atalhos de gerenciamento.
                 toggle = _PROG_DATA_BASE / svc["dir"] / svc["toggle"]

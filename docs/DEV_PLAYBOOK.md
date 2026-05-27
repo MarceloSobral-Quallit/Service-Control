@@ -1,7 +1,7 @@
 # Service Control — DEV Playbook
 
 **Mantenedor:** Quallit Dev Team — desenv@quallit.com.br  
-**Versão:** 1.26.05.26
+**Versão:** 1.27.05.26
 
 ---
 
@@ -81,12 +81,13 @@ Service-Control/
 
 ## Fluxo de instalação e ProgramData
 
-O install-script de cada serviço executa sempre os mesmos 4 passos:
+O install-script de cada serviço executa sempre os mesmos 5 passos:
 
 1. **Unblock-File** — Remove `Zone.Identifier` de todos os `.ps1` da pasta de origem (scripts baixados da internet são bloqueados pelo Windows por padrão)
 2. **Copia para ProgramData** — `Get-ChildItem *.ps1` → `Copy-Item` para `C:\ProgramData\ServiceControl\<SERVIÇO>\`
 3. **Cria pasta de atalhos** — `Menu Iniciar > Programs > Service Control`
 4. **Cria atalhos `.lnk`** — usando `WScript.Shell.CreateShortcut`, apontando para `powershell.exe -File "<ProgramData>\toggle.ps1" -Mode Enable|Disable`
+5. **Registra tarefa de boot** — `Register-ScheduledTask -TaskPath '\ServiceControl\'` com trigger `AtStartup`, Principal `SYSTEM` (RunLevel Highest). Executa `toggle.ps1 -Mode Disable -NoWait` a cada inicialização, garantindo que serviços e adaptadores voltem ao estado `Disabled` após qualquer reboot. O parâmetro `-NoWait` suprime a pausa interativa de 15 s, necessária apenas em execuções manuais.
 
 Os atalhos apontam **sempre** para `ProgramData`, não para a origem. Isso permite que:
 - O `.exe` / pasta de scripts seja movido ou deletado após a instalação
@@ -296,6 +297,27 @@ O driver `vboxnetadp` (NDIS miniport) não pode ser parado enquanto o adaptador 
 
 Sem essa ordem, `Stop-Service vboxnetadp` falha com erro de permissão.
 
+### Desabilitação de adaptadores com estado `Not Present`
+
+Quando o modo Disable é chamado (incluindo pela tarefa de boot), os adaptadores virtuais podem estar no estado `Not Present` — o driver de kernel já carregou o device node, mas o serviço user-mode ainda não iniciou (ou foi parado).
+
+`Disable-NetAdapter` não funciona para dispositivos `Not Present`. Por isso os scripts fazem fallback para `Disable-PnpDevice`:
+
+```powershell
+if ($a.Status -in 'Not Present', 'NotPresent') {
+    $pnp = Get-PnpDevice -ErrorAction SilentlyContinue |
+           Where-Object { $_.FriendlyName -eq $a.Name } |
+           Select-Object -First 1
+    if ($pnp) {
+        Disable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false -ErrorAction Stop
+    }
+} else {
+    Disable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop
+}
+```
+
+`Disable-PnpDevice` grava o estado `Disabled` diretamente no device node do registro, garantindo que o adaptador permaneça desabilitado mesmo após o driver recarregar.
+
 ### VMware — Habilitação de adaptadores (Enable)
 
 As NICs virtuais VMnet1 e VMnet8 são criadas pelos serviços VMware. Após iniciar os serviços,
@@ -419,6 +441,9 @@ Copie `install-shortcuts.ps1` de um serviço existente (ex: OPENVPN) e ajuste:
 - `$progDataDir` → `'C:\ProgramData\ServiceControl\NOVOSERVICO'`
 - `$togglePs1` → `Join-Path $progDataDir 'novoservico-toggle.ps1'`
 - Atalhos criados com `New-Shortcut`
+- `$bootTaskName` → `'ServiceControl_NovoServico_DisableAdaptersOnBoot'` (deve corresponder ao `boot_task` registrado na GUI)
+
+> **Nota:** `menu.ps1` (opções 11–15) remove apenas os atalhos do Menu Iniciar. A remoção da tarefa de boot é responsabilidade exclusiva da GUI. Certifique-se de que o novo serviço seja registrado na GUI para que a desinstalação funcione corretamente.
 
 ### 2. Registrar no `menu.ps1`
 
@@ -440,9 +465,12 @@ SERVICES = [
         "script":    "install-shortcuts.ps1",
         "toggle":    "novoservico-toggle.ps1",
         "shortcuts": ["NovoServico - Enable.lnk", "NovoServico - Disable.lnk"],
+        "boot_task": "ServiceControl_NovoServico_DisableAdaptersOnBoot",
     },
 ]
 ```
+
+O campo `boot_task` deve corresponder ao `$bootTaskName` definido no `install-shortcuts.ps1` do serviço. A GUI usa esse valor para remover a tarefa agendada no fluxo de desinstalação.
 
 ### 4. Registrar no build (`tools/build_release.py`)
 
@@ -453,6 +481,20 @@ _SERVICE_DIRS = ["VMWARE", "FORTINET", "VIRTUALBOX", "OPENVPN", "NOVOSERVICO"]
 ---
 
 ## Decisões de design
+
+### Por que usar Scheduled Task para garantir o estado após reboot?
+
+Quando `Enable` é executado, dois estados são gravados no registro do Windows:
+- `StartType = Manual` nos serviços (via `sc.exe config start= demand`)
+- Adaptador PnP habilitado (via `Enable-NetAdapter` / `Enable-PnpDevice`)
+
+Após um reboot, os serviços não iniciam (`Manual` não é auto-start), mas o estado PnP do adaptador permanece "habilitado" no registro. Se os serviços fossem iniciados manualmente, os adaptadores voltariam como `Up` imediatamente.
+
+A tarefa de boot resolve isso executando `toggle.ps1 -Mode Disable -NoWait` como `SYSTEM` antes do logon, que:
+1. Confirma que os serviços estão `Stopped` e define `StartType = Disabled`
+2. Chama `Disable-PnpDevice` nos adaptadores `Not Present` (adaptadores TAP e virtuais cujo driver já carregou) — gravando o estado `Disabled` no registro PnP
+
+Com isso, mesmo após `Enable` + reboot, o estado é previsível: serviços `Disabled`, adaptadores `Disabled` (ou `Not Present` sem possibilidade de iniciar). A re-ativação só é possível executando `Enable` explicitamente.
 
 ### Por que copiar scripts para ProgramData?
 
