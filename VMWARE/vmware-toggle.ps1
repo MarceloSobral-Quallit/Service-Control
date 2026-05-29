@@ -219,7 +219,7 @@ function Toggle-VMwareAdapters {
             if ($Action -eq 'Disable' -and $a.Status -ne 'Disabled') {
                 if ($a.Status -in 'Not Present', 'NotPresent') {
                     $pnp = Get-PnpDevice -ErrorAction SilentlyContinue |
-                           Where-Object { $_.FriendlyName -eq $a.Name } |
+                           Where-Object { $_.FriendlyName -eq $a.Name -or $_.FriendlyName -eq $a.InterfaceDescription } |
                            Select-Object -First 1
                     if ($pnp) {
                         Disable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false -ErrorAction Stop
@@ -234,14 +234,21 @@ function Toggle-VMwareAdapters {
             } elseif ($Action -eq 'Enable' -and $a.Status -ne 'Up') {
                 if ($a.Status -in 'Not Present', 'NotPresent') {
                     # Enable-NetAdapter nao funciona para 'Not Present'; usa Enable-PnpDevice
+                    # Tenta match por Name e por InterfaceDescription
                     $pnp = Get-PnpDevice -ErrorAction SilentlyContinue |
-                           Where-Object { $_.FriendlyName -eq $a.Name } |
+                           Where-Object { $_.FriendlyName -eq $a.Name -or $_.FriendlyName -eq $a.InterfaceDescription } |
                            Select-Object -First 1
+                    if (-not $pnp) {
+                        $pnp = Get-PnpDevice -Class 'Net' -ErrorAction SilentlyContinue |
+                               Where-Object { $_.FriendlyName -like "*VMware*" } |
+                               Where-Object { $_.FriendlyName -like "*$($a.Name.Split(' ')[-1])*" } |
+                               Select-Object -First 1
+                    }
                     if ($pnp) {
                         Enable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false -ErrorAction Stop
-                        Write-Log "Adaptador habilitado (PnP): $($a.Name)" 'Green'
+                        Write-Log "Adaptador habilitado (PnP): $($a.Name) [$($pnp.FriendlyName)]" 'Green'
                     } else {
-                        Write-Log "Adaptador PnP nao encontrado: $($a.Name) [$($a.Status)]" 'Yellow'
+                        Write-Log "Adaptador PnP nao encontrado: $($a.Name) [$($a.Status)] / Desc: $($a.InterfaceDescription)" 'Yellow'
                     }
                 } else {
                     Enable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop
@@ -276,7 +283,10 @@ function Wait-VMwareAdaptersPresent {
 # -----------------------------------------------------------------------
 if ($Mode -eq 'Enable') {
 
-    Write-Log '--- [1/3] Iniciando servicos VMware ---' 'Cyan'
+    Write-Log '--- [1/3] Habilitando adaptadores VMware ---' 'Cyan'
+    Toggle-VMwareAdapters -Action Enable
+
+    Write-Log '--- [2/3] Iniciando servicos VMware ---' 'Cyan'
     foreach ($s in $present) {
         Set-ServiceStartType -Name $s -StartType 'demand'
         Start-Sleep -Milliseconds 500
@@ -304,13 +314,40 @@ if ($Mode -eq 'Enable') {
         Start-Sleep -Milliseconds 500
     }
 
-    Write-Log '--- [2/3] Habilitando adaptadores VMware ---' 'Cyan'
-    Write-Log 'Aguardando adaptadores virtuais serem inicializados pelos servicos...' 'DarkGray'
-    $present2 = Wait-VMwareAdaptersPresent -TimeoutSec 30
-    if (-not $present2) { Write-Log 'Aviso: adaptadores ainda Not Present apos 30s (VMware pode estar lento).' 'Yellow' }
-    Toggle-VMwareAdapters -Action Enable
+    Write-Log '--- [3/3] Verificando estado final ---' 'Cyan'
+    $allOk = $true
 
-    Write-Log '--- [3/3] VMware habilitado. ---' 'Green'
+    foreach ($s in $present) {
+        $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
+        if ($svc) {
+            if ($svc.Status -eq 'Running') {
+                Write-Log "  [OK] Servico Running : $s" 'Green'
+            } else {
+                Write-Log "  [FALHA] Servico $($svc.Status): $s" 'Red'
+                $allOk = $false
+            }
+        }
+    }
+
+    $vmAdapters = Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue |
+                  Where-Object { $_.InterfaceDescription -like '*VMware*' -or $_.Name -like 'VMnet*' }
+    if ($vmAdapters) {
+        foreach ($a in $vmAdapters) {
+            if ($a.Status -eq 'Up') {
+                Write-Log "  [OK] Adaptador Up    : $($a.Name)" 'Green'
+            } else {
+                Write-Log "  [AVISO] Adaptador $($a.Status): $($a.Name)" 'Yellow'
+            }
+        }
+    } else {
+        Write-Log '  [AVISO] Nenhum adaptador VMware encontrado.' 'Yellow'
+    }
+
+    if ($allOk) {
+        Write-Log '--- [OK] VMware habilitado e verificado com sucesso. ---' 'Green'
+    } else {
+        Write-Log '--- [ATENCAO] VMware habilitado com erros. Verifique os itens acima. ---' 'Yellow'
+    }
 
     if ($OpenGUI) {
         $guiPaths = @(

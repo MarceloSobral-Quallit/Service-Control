@@ -1,2 +1,2 @@
-Versao: 1.27.05.26
-Atualizado em: 27/05/2026 14:20:57
+Versao: 1.28.05.26
+Atualizado em: 29/05/2026 11:10:03
