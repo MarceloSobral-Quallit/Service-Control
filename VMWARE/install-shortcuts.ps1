@@ -239,32 +239,135 @@ if ($DisableAllNow) {
 }
 
 # -----------------------------------------------------------------------
-# Tarefa agendada: desabilita adaptadores e servicos VMware a cada boot
-# Garante que interfaces ficam Disabled apos reboot, mesmo apos Enable.
+# Tarefa agendada: desabilita adaptadores e servicos VMware no shutdown
+# Trigger: Event ID 1074 (User32/System) - disparado ao iniciar shutdown
+# ou restart pelo usuario/sistema. Substitui o antigo trigger de boot.
 # -----------------------------------------------------------------------
-Write-Host "`nRegistrando tarefa de boot..." -ForegroundColor Cyan
-$bootTaskName = 'ServiceControl_VMware_DisableAdaptersOnBoot'
-$bootTaskPath = '\ServiceControl\'
-$bootAction   = New-ScheduledTaskAction `
-    -Execute  'powershell.exe' `
-    -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$togglePs1`" -Mode Disable -NoWait"
-$bootTrigger   = New-ScheduledTaskTrigger -AtStartup
-$bootPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
-$bootSettings  = New-ScheduledTaskSettingsSet `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
-    -StartWhenAvailable `
-    -MultipleInstances  IgnoreNew
+
+# Remove tarefa de boot legada, se existir
+$legacyTaskName = 'ServiceControl_VMware_DisableAdaptersOnBoot'
+if (Get-ScheduledTask -TaskName $legacyTaskName -TaskPath '\ServiceControl\' -ErrorAction SilentlyContinue) {
+    try {
+        Unregister-ScheduledTask -TaskName $legacyTaskName -TaskPath '\ServiceControl\' -Confirm:$false -ErrorAction Stop
+        Write-Host "Tarefa legada removida : \ServiceControl\$legacyTaskName" -ForegroundColor DarkGray
+    } catch {
+        Write-Host "Aviso: nao foi possivel remover tarefa legada: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
+Write-Host "`nRegistrando tarefa de shutdown..." -ForegroundColor Cyan
+$shutdownTaskName = 'ServiceControl_VMware_DisableOnShutdown'
+$shutdownTaskPath = '\ServiceControl\'
+
+# A tarefa e registrada via XML para usar EventTrigger (shutdown/restart)
+# Event ID 1074, fonte User32, log System: disparado quando shutdown/restart e iniciado
+$escapedScript = $togglePs1 -replace '"', '&quot;'
+$shutdownTaskXml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Service Control: desabilita servicos e adaptadores VMware no shutdown/restart</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <EventTrigger>
+      <Enabled>true</Enabled>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='USER32'] and EventID=1074]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+    </EventTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <ExecutionTimeLimit>PT3M</ExecutionTimeLimit>
+    <Priority>4</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$escapedScript" -Mode Disable -NoWait</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+
 try {
+    # Remove versao anterior da tarefa de shutdown, se existir (reinstalacao)
+    Unregister-ScheduledTask -TaskName $shutdownTaskName -TaskPath $shutdownTaskPath -Confirm:$false -ErrorAction SilentlyContinue
+
     Register-ScheduledTask `
-        -TaskName    $bootTaskName `
-        -TaskPath    $bootTaskPath `
-        -Action      $bootAction `
-        -Trigger     $bootTrigger `
-        -Principal   $bootPrincipal `
-        -Settings    $bootSettings `
-        -Description 'Service Control: desabilita servicos e adaptadores VMware a cada boot' `
-        -Force       -ErrorAction Stop | Out-Null
-    Write-Host "Tarefa de boot criada : ${bootTaskPath}${bootTaskName}" -ForegroundColor Green
+        -TaskName $shutdownTaskName `
+        -TaskPath $shutdownTaskPath `
+        -Xml      $shutdownTaskXml `
+        -Force    -ErrorAction Stop | Out-Null
+    Write-Host "Tarefa de shutdown criada: ${shutdownTaskPath}${shutdownTaskName}" -ForegroundColor Green
+} catch {
+    Write-Host "Aviso: nao foi possivel criar tarefa de shutdown: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
+# -----------------------------------------------------------------------
+# Tarefa agendada: desabilita adaptadores e servicos VMware no boot
+# Fallback para quando o shutdown task nao completou antes do sistema desligar.
+# Trigger: BootTrigger com delay de 30s, roda como SYSTEM.
+# Garante estado limpo a cada inicializacao, independente do que ocorreu no
+# shutdown anterior.
+# -----------------------------------------------------------------------
+Write-Host "`nRegistrando tarefa de boot (fallback)..." -ForegroundColor Cyan
+$bootTaskName = 'ServiceControl_VMware_DisableOnBoot'
+$bootTaskPath = '\ServiceControl\'
+
+$bootTaskXml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Service Control: desabilita servicos e adaptadores VMware no boot (fallback para shutdown incompleto)</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <BootTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT30S</Delay>
+    </BootTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT2M</ExecutionTimeLimit>
+    <Priority>4</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$escapedScript" -Mode Disable -NoWait</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+
+try {
+    Unregister-ScheduledTask -TaskName $bootTaskName -TaskPath $bootTaskPath -Confirm:$false -ErrorAction SilentlyContinue
+
+    Register-ScheduledTask `
+        -TaskName $bootTaskName `
+        -TaskPath $bootTaskPath `
+        -Xml      $bootTaskXml `
+        -Force    -ErrorAction Stop | Out-Null
+    Write-Host "Tarefa de boot criada  : ${bootTaskPath}${bootTaskName}" -ForegroundColor Green
 } catch {
     Write-Host "Aviso: nao foi possivel criar tarefa de boot: $($_.Exception.Message)" -ForegroundColor Yellow
 }

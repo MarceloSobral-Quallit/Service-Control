@@ -202,6 +202,28 @@ function Set-ServiceStartType {
     }
 }
 
+# Persiste o estado disable/enable de um device PnP no registro (ConfigFlags bit 0)
+# Impede que o driver VMware re-habilite o adaptador durante a enumeracao no boot
+function Set-PnpConfigFlags {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstanceId,
+        [Parameter(Mandatory = $true)][ValidateSet('Disable', 'Enable')][string]$Action
+    )
+    # InstanceId ex.: ROOT\NET\0001 -> HKLM:\SYSTEM\CurrentControlSet\Enum\ROOT\NET\0001
+    $regPath = 'HKLM:\SYSTEM\CurrentControlSet\Enum\' + $InstanceId.Replace('/', '\')
+    try {
+        $cur = (Get-ItemProperty -Path $regPath -Name 'ConfigFlags' -ErrorAction SilentlyContinue).ConfigFlags
+        if ($null -eq $cur) { $cur = 0 }
+        $new = if ($Action -eq 'Disable') { $cur -bor 0x1 } else { $cur -band (-bnot 0x1) }
+        if ($cur -ne $new) {
+            Set-ItemProperty -Path $regPath -Name 'ConfigFlags' -Value $new -Type DWord -ErrorAction Stop
+            Write-Log "ConfigFlags [$Action] $InstanceId  (0x$($cur.ToString('X8')) -> 0x$($new.ToString('X8')))" 'DarkGray'
+        }
+    } catch {
+        Write-Log "Falha ao setar ConfigFlags [$Action] $InstanceId : $($_.Exception.Message)" 'Yellow'
+    }
+}
+
 # Habilita ou desabilita adaptadores de rede VMware com try/catch individual
 function Toggle-VMwareAdapters {
     param([ValidateSet('Enable', 'Disable')][string]$Action)
@@ -217,42 +239,50 @@ function Toggle-VMwareAdapters {
     foreach ($a in $adapters) {
         try {
             if ($Action -eq 'Disable' -and $a.Status -ne 'Disabled') {
-                if ($a.Status -in 'Not Present', 'NotPresent') {
-                    $pnp = Get-PnpDevice -ErrorAction SilentlyContinue |
-                           Where-Object { $_.FriendlyName -eq $a.Name -or $_.FriendlyName -eq $a.InterfaceDescription } |
+                # Usa Disable-PnpDevice para todos os casos: persiste no registro e impede
+                # o driver VMware de re-habilitar o adaptador apos reinicializacao.
+                $pnp = Get-PnpDevice -Class 'Net' -ErrorAction SilentlyContinue |
+                       Where-Object { $_.FriendlyName -eq $a.InterfaceDescription -or $_.FriendlyName -eq $a.Name } |
+                       Select-Object -First 1
+                if (-not $pnp) {
+                    $pnp = Get-PnpDevice -Class 'Net' -ErrorAction SilentlyContinue |
+                           Where-Object { $_.FriendlyName -like '*VMware*' -and
+                               ($_.FriendlyName -like "*$($a.Name)*" -or $_.FriendlyName -like "*$($a.InterfaceDescription)*") } |
                            Select-Object -First 1
-                    if ($pnp) {
-                        Disable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false -ErrorAction Stop
-                        Write-Log "Adaptador desabilitado (PnP): $($a.Name)" 'Green'
-                    } else {
-                        Write-Log "Adaptador PnP nao encontrado: $($a.Name) [$($a.Status)]" 'Yellow'
-                    }
-                } else {
+                }
+                if ($pnp) {
+                    Disable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false -ErrorAction Stop
+                    Set-PnpConfigFlags -InstanceId $pnp.InstanceId -Action 'Disable'
+                    Write-Log "Adaptador desabilitado (PnP): $($a.Name) [$($pnp.FriendlyName)]" 'Green'
+                } elseif ($a.Status -notin 'Not Present', 'NotPresent') {
+                    # Fallback: PnP nao encontrado mas adaptador esta presente
                     Disable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop
-                    Write-Log "Adaptador desabilitado : $($a.Name)" 'Green'
+                    Write-Log "Adaptador desabilitado (NetAdapter): $($a.Name)" 'Yellow'
+                } else {
+                    Write-Log "Adaptador PnP nao encontrado: $($a.Name) [$($a.Status)]" 'Yellow'
                 }
             } elseif ($Action -eq 'Enable' -and $a.Status -ne 'Up') {
-                if ($a.Status -in 'Not Present', 'NotPresent') {
-                    # Enable-NetAdapter nao funciona para 'Not Present'; usa Enable-PnpDevice
-                    # Tenta match por Name e por InterfaceDescription
-                    $pnp = Get-PnpDevice -ErrorAction SilentlyContinue |
-                           Where-Object { $_.FriendlyName -eq $a.Name -or $_.FriendlyName -eq $a.InterfaceDescription } |
+                # Usa Enable-PnpDevice para todos os casos: simetrico ao Disable-PnpDevice.
+                # Necessario quando o adaptador foi desabilitado via PnP (estado persiste no registro).
+                $pnp = Get-PnpDevice -Class 'Net' -ErrorAction SilentlyContinue |
+                       Where-Object { $_.FriendlyName -eq $a.InterfaceDescription -or $_.FriendlyName -eq $a.Name } |
+                       Select-Object -First 1
+                if (-not $pnp) {
+                    $pnp = Get-PnpDevice -Class 'Net' -ErrorAction SilentlyContinue |
+                           Where-Object { $_.FriendlyName -like '*VMware*' -and
+                               ($_.FriendlyName -like "*$($a.Name)*" -or $_.FriendlyName -like "*$($a.InterfaceDescription)*") } |
                            Select-Object -First 1
-                    if (-not $pnp) {
-                        $pnp = Get-PnpDevice -Class 'Net' -ErrorAction SilentlyContinue |
-                               Where-Object { $_.FriendlyName -like "*VMware*" } |
-                               Where-Object { $_.FriendlyName -like "*$($a.Name.Split(' ')[-1])*" } |
-                               Select-Object -First 1
-                    }
-                    if ($pnp) {
-                        Enable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false -ErrorAction Stop
-                        Write-Log "Adaptador habilitado (PnP): $($a.Name) [$($pnp.FriendlyName)]" 'Green'
-                    } else {
-                        Write-Log "Adaptador PnP nao encontrado: $($a.Name) [$($a.Status)] / Desc: $($a.InterfaceDescription)" 'Yellow'
-                    }
-                } else {
+                }
+                if ($pnp) {
+                    Set-PnpConfigFlags -InstanceId $pnp.InstanceId -Action 'Enable'
+                    Enable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false -ErrorAction Stop
+                    Write-Log "Adaptador habilitado (PnP): $($a.Name) [$($pnp.FriendlyName)]" 'Green'
+                } elseif ($a.Status -notin 'Not Present', 'NotPresent') {
+                    # Fallback: PnP nao encontrado mas adaptador esta presente
                     Enable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop
-                    Write-Log "Adaptador habilitado   : $($a.Name)" 'Green'
+                    Write-Log "Adaptador habilitado (NetAdapter): $($a.Name)" 'Yellow'
+                } else {
+                    Write-Log "Adaptador PnP nao encontrado: $($a.Name) [$($a.Status)] / Desc: $($a.InterfaceDescription)" 'Yellow'
                 }
             } else {
                 Write-Log "Adaptador ja OK        : $($a.Name) [$($a.Status)]" 'DarkGray'
@@ -283,10 +313,7 @@ function Wait-VMwareAdaptersPresent {
 # -----------------------------------------------------------------------
 if ($Mode -eq 'Enable') {
 
-    Write-Log '--- [1/3] Habilitando adaptadores VMware ---' 'Cyan'
-    Toggle-VMwareAdapters -Action Enable
-
-    Write-Log '--- [2/3] Iniciando servicos VMware ---' 'Cyan'
+    Write-Log '--- [1/3] Iniciando servicos VMware ---' 'Cyan'
     foreach ($s in $present) {
         Set-ServiceStartType -Name $s -StartType 'demand'
         Start-Sleep -Milliseconds 500
@@ -313,6 +340,14 @@ if ($Mode -eq 'Enable') {
         }
         Start-Sleep -Milliseconds 500
     }
+
+    Write-Log '--- [2/3] Habilitando adaptadores VMware ---' 'Cyan'
+    Write-Log 'Aguardando adaptadores virtuais serem inicializados pelos servicos...' 'DarkGray'
+    $appeared = Wait-VMwareAdaptersPresent -TimeoutSec 30
+    if (-not $appeared) {
+        Write-Log 'Timeout aguardando adaptadores saírem de Not Present (prosseguindo mesmo assim).' 'Yellow'
+    }
+    Toggle-VMwareAdapters -Action Enable
 
     Write-Log '--- [3/3] Verificando estado final ---' 'Cyan'
     $allOk = $true
